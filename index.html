@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>听译集</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260510-history-download-2" />
   </head>
   <body>
     <main class="shell">
@@ -114,14 +114,14 @@
           <div class="api-panel-head modal-head">
             <div>
               <h2 id="historyModalTitle">历史库</h2>
-              <p>按歌手筛选网页记录，也可以保存为本地 DOCX 文档</p>
+              <p>按歌手筛选网页记录，也可以下载为 DOCX 文档</p>
             </div>
             <button class="button ghost compact" type="button" id="clearHistoryButton">清空历史</button>
           </div>
           <label class="history-filter"><span>歌手分类</span><select id="historyArtistFilter"></select></label>
           <div class="history-path">
-            <label><span>DOCX 保存路径</span><input id="historyDirInput" type="text" autocomplete="off" /></label>
-            <button class="button ghost compact" type="button" id="saveHistoryDirButton">保存路径</button>
+            <label><span>下载位置</span><input id="historyDirInput" type="text" autocomplete="off" value="浏览器默认下载路径" readonly /></label>
+            <button class="button ghost compact" type="button" id="saveHistoryDirButton">选择路径</button>
           </div>
           <div class="history-list" id="historyList"></div>
           <div class="modal-actions"><button class="button secondary" type="button" id="closeHistoryButton">关闭</button></div>
@@ -191,7 +191,7 @@
       </section>
     </main>
 
-    <script src="/network.js" defer></script>
-    <script src="/app.js" defer></script>
+    <script src="/network.js?v=20260510-history-download-2" defer></script>
+    <script src="/app.js?v=20260510-history-download-2" defer></script>
   </body>
 </html>
