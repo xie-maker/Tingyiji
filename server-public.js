@@ -1,16 +1,20 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const MAX_BODY = 1024 * 1024 * 2;
 const HISTORY_DIR = process.env.HISTORY_DIR || path.join(__dirname, '历史库');
+const downloads = new Map();
 const originalCreateServer = http.createServer;
 
 http.createServer = function patchedCreateServer(listener) {
   return originalCreateServer.call(http, async (req, res) => {
     try {
-      const url = new URL(req.url, `http://${req.headers.host}`);
-      if (url.pathname === '/api/history/save-docx') return await saveDocx(req, res);
+      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      if (url.pathname === '/api/history/prepare-docx') return await prepareDocx(req, res);
+      if (url.pathname === '/api/history/download-docx') return downloadDocx(req, res, url);
+      if (url.pathname === '/api/history/save-docx') return await saveDocx(req, res, url);
       return listener(req, res);
     } catch (error) {
       console.error(error);
@@ -21,31 +25,71 @@ http.createServer = function patchedCreateServer(listener) {
 
 require('./server.js');
 
-async function saveDocx(req, res) {
+async function prepareDocx(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: '请使用 POST 请求。' });
   const body = await readBody(req);
   const entry = body.entry || body;
-  const filename = safeFilename(`${entry.artist || '未填写歌手'} - ${entry.title || '未填写歌名'} - ${stamp(entry.createdAt)}.docx`);
-  const buffer = createDocx(entry);
+  const file = buildFile(entry);
+  const id = crypto.randomBytes(12).toString('hex');
+  downloads.set(id, { ...file, expiresAt: Date.now() + 10 * 60 * 1000 });
+  cleanupDownloads();
+  return json(res, 200, { id, filename: file.filename, downloadUrl: `/api/history/download-docx?id=${id}` });
+}
 
-  if (body.mode === 'download' || body.forceDownload) {
-    res.writeHead(200, {
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
-      'Content-Length': buffer.length,
-      'Cache-Control': 'no-store',
-    });
-    return res.end(buffer);
+function downloadDocx(req, res, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: '请使用 GET 请求下载 DOCX。' });
+  cleanupDownloads();
+  const id = url.searchParams.get('id') || '';
+  if (!id) return json(res, 400, { error: '下载链接缺少文件编号，请回到历史库重新点击下载 DOCX。' });
+  const file = downloads.get(id);
+  if (!file) return json(res, 404, { error: '下载链接已过期，请回到历史库重新点击下载 DOCX。' });
+  return sendDocx(req, res, file);
+}
+
+async function saveDocx(req, res, url) {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    const id = url.searchParams.get('id');
+    if (id) return downloadDocx(req, res, url);
+    return json(res, 400, { error: '下载链接缺少文件编号，请回到历史库重新点击下载 DOCX。' });
   }
+  if (req.method !== 'POST') return json(res, 405, { error: '请使用 POST 请求。' });
+  const body = await readBody(req);
+  const entry = body.entry || body;
+  const file = buildFile(entry);
+
+  if (body.mode === 'download' || body.forceDownload) return sendDocx(req, res, file);
 
   const targetDir = clean(body.historyDir) || HISTORY_DIR;
   if (process.platform !== 'win32' && /^[a-zA-Z]:[\\/]/.test(targetDir)) {
     return json(res, 409, { error: '公网服务器不能直接写入你设备上的本地磁盘路径，请使用下载 DOCX。', downloadAvailable: true });
   }
   fs.mkdirSync(targetDir, { recursive: true });
-  const filePath = path.join(targetDir, filename);
-  fs.writeFileSync(filePath, buffer);
-  return json(res, 200, { filename, filePath });
+  const filePath = path.join(targetDir, file.filename);
+  fs.writeFileSync(filePath, file.buffer);
+  return json(res, 200, { filename: file.filename, filePath });
+}
+
+function buildFile(entry) {
+  const filename = safeFilename(`${entry.artist || '未填写歌手'} - ${entry.title || '未填写歌名'} - ${stamp(entry.createdAt)}.docx`);
+  return { filename, buffer: createDocx(entry) };
+}
+
+function sendDocx(req, res, file) {
+  res.writeHead(200, {
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+    'Content-Length': file.buffer.length,
+    'Cache-Control': 'no-store',
+  });
+  if (req.method === 'HEAD') return res.end();
+  return res.end(file.buffer);
+}
+
+function cleanupDownloads() {
+  const now = Date.now();
+  for (const [id, file] of downloads) {
+    if (file.expiresAt <= now) downloads.delete(id);
+  }
 }
 
 function readBody(req) {
@@ -97,13 +141,13 @@ function stamp(value) {
 
 function createDocx(entry) {
   const title = paragraph(entry.title || '未填写歌名', { align: 'center', size: 32, eastAsia: '黑体', ascii: 'Times New Roman' });
-  const artist = paragraph(entry.artist || '未填写歌手', { align: 'center', size: 24 });
+  const artist = paragraph(entry.artist || '未填写歌手', { align: 'center', size: 24, eastAsia: '宋体', ascii: 'Times New Roman' });
   const meta = [
     paragraph(new Date(entry.createdAt || Date.now()).toLocaleString('zh-CN'), { align: 'right', size: 24 }),
     paragraph(entry.sourceLanguage || 'auto', { align: 'right', size: 24 }),
     paragraph(' ', { size: 24 }),
   ].join('');
-  const source = String(entry.lyrics || '').split('\n').map((line) => paragraph(line, { size: 24 })).join('');
+  const source = String(entry.lyrics || '').split('\n').map((line) => paragraph(line, { size: 24, eastAsia: '宋体', ascii: 'Times New Roman' })).join('');
   const pageBreak = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
   const translation = String(entry.fullTranslation || '').split('\n').map((line) => paragraph(line, { size: 24, eastAsia: '宋体', ascii: 'Times New Roman' })).join('');
   const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${title}${artist}${meta}${source}${pageBreak}${translation}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`;
@@ -130,7 +174,7 @@ function zip(files) {
   let offset = 0;
   for (const [name, data] of Object.entries(files)) {
     const nameBuffer = Buffer.from(name);
-    const dataBuffer = Buffer.from(data);
+    const dataBuffer = Buffer.from(data, 'utf8');
     const crc = crc32(dataBuffer);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
