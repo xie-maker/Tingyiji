@@ -1,0 +1,6 @@
+.env.local
+.history-settings.json
+历史库/
+node_modules/
+.DS_Store
+Thumbs.db
