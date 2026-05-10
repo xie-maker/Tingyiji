@@ -1,5 +1,7 @@
 # 听译集
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/xie-maker/Tingyiji)
+
 听译集是一个外文歌曲歌词译中网页工具。你粘贴外文歌词，填写歌名和歌手，选择翻译偏好和大模型接口后，它会把歌词翻译成中文，并保留原文换行做逐行对照。
 
 ## 本地启动
@@ -56,7 +58,7 @@ DOCX 使用内置排版生成：歌名居中、歌手居中、保存时间和源
 
 ## Render 部署
 
-项目已包含 `render.yaml`，可以直接在 Render 新建 Web Service 并连接本仓库。
+点击 README 顶部的 `Deploy to Render` 按钮，或在 Render 新建 Web Service 并连接本仓库。
 
 推荐设置：
 
