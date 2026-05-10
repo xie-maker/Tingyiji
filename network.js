@@ -5,23 +5,19 @@
   const defaultDownloadText = '浏览器默认下载路径';
   let selectedDirectoryHandle = null;
 
-  function getPathname(input) {
+  function pathnameOf(input) {
     try {
       if (typeof input === 'string') return new URL(input, window.location.origin).pathname;
       if (input instanceof URL) return input.pathname;
-      if (input && typeof input.url === 'string') return new URL(input.url, window.location.origin).pathname;
+      if (input?.url) return new URL(input.url, window.location.origin).pathname;
     } catch {}
     return '';
-  }
-
-  function isApiRequest(input) {
-    return getPathname(input).startsWith('/api/');
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   window.fetch = async (input, init) => {
-    const pathname = getPathname(input);
+    const pathname = pathnameOf(input);
     const method = String(init?.method || 'GET').toUpperCase();
 
     if (pathname === '/api/history/settings' && method === 'GET') {
@@ -31,17 +27,16 @@
       });
     }
 
-    if (!isApiRequest(input)) return nativeFetch(input, init);
+    if (!pathname.startsWith('/api/')) return nativeFetch(input, init);
 
     let lastError;
-    const candidates = [input, typeof input === 'string' ? new URL(input, window.location.origin).toString() : input];
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const target = candidates[Math.min(attempt, candidates.length - 1)];
       try {
+        const target = attempt === 0 ? input : (typeof input === 'string' ? new URL(input, window.location.origin).toString() : input);
         return await nativeFetch(target, init);
       } catch (error) {
         lastError = error;
-        await sleep(900 + attempt * 1400);
+        await sleep(800 + attempt * 1200);
       }
     }
     throw new TypeError(`网络请求没有成功  请刷新页面或稍后重试  ${lastError?.message || ''}`.trim());
@@ -50,40 +45,64 @@
   function seedDeepSeekProfile() {
     try {
       const raw = localStorage.getItem(apiKey);
-      if (!raw) {
-        localStorage.setItem(apiKey, JSON.stringify({
-          activeProfileId: 1,
-          profiles: [
-            { id: 1, enabled: true, provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', saveKey: false, apiKey: '' },
-            { id: 2, enabled: false },
-            { id: 3, enabled: false },
-            { id: 4, enabled: false },
-            { id: 5, enabled: false },
-          ],
-        }));
-        return;
-      }
-
-      const state = JSON.parse(raw);
-      if (!Array.isArray(state.profiles)) return;
-      let profile1 = state.profiles.find((profile) => Number(profile.id) === 1);
-      if (!profile1) {
-        profile1 = { id: 1, enabled: true, provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', saveKey: false, apiKey: '' };
-        state.profiles.unshift(profile1);
-      } else if (!profile1.enabled && !profile1.provider && !profile1.model && !profile1.baseUrl) {
-        Object.assign(profile1, { enabled: true, provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' });
-      }
-      localStorage.setItem(apiKey, JSON.stringify(state));
+      if (raw) return;
+      localStorage.setItem(apiKey, JSON.stringify({
+        activeProfileId: 1,
+        profiles: [
+          { id: 1, enabled: true, provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', saveKey: false, apiKey: '' },
+          { id: 2, enabled: false },
+          { id: 3, enabled: false },
+          { id: 4, enabled: false },
+          { id: 5, enabled: false },
+        ],
+      }));
     } catch {}
   }
 
-  const findEntry = (id) => {
-    try {
-      return JSON.parse(localStorage.getItem(historyKey) || '[]').find((entry) => entry.id === id);
-    } catch {
-      return null;
+  function historyItems() {
+    try { return JSON.parse(localStorage.getItem(historyKey) || '[]'); } catch { return []; }
+  }
+
+  function historyEntry(id) {
+    return historyItems().find((entry) => entry.id === id);
+  }
+
+  function showMessage(value, isError = false) {
+    const node = document.getElementById('message');
+    if (!node) return;
+    node.textContent = value || '';
+    node.classList.toggle('error', isError);
+  }
+
+  function normalizeHistoryPathUi() {
+    const input = document.getElementById('historyDirInput');
+    const button = document.getElementById('saveHistoryDirButton');
+    const label = input?.closest('label')?.querySelector('span');
+    if (label && label.textContent !== '下载位置') label.textContent = '下载位置';
+    if (input) {
+      const value = selectedDirectoryHandle?.name || defaultDownloadText;
+      if (input.value !== value) input.value = value;
+      input.placeholder = defaultDownloadText;
+      input.readOnly = true;
     }
-  };
+    if (button && button.textContent !== '选择路径') button.textContent = '选择路径';
+  }
+
+  async function chooseDirectory() {
+    const input = document.getElementById('historyDirInput');
+    if (!window.showDirectoryPicker) {
+      normalizeHistoryPathUi();
+      showMessage('当前浏览器不支持网页选择下载文件夹，将使用浏览器默认下载路径。');
+      return;
+    }
+    try {
+      selectedDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      if (input) input.value = selectedDirectoryHandle.name || '已选择文件夹';
+      showMessage('已选择下载位置。');
+    } catch {
+      normalizeHistoryPathUi();
+    }
+  }
 
   async function prepareDocx(entry) {
     const response = await nativeFetch('/api/history/prepare-docx', {
@@ -91,7 +110,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entry }),
     });
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'DOCX 生成失败');
     return data;
   }
@@ -101,68 +120,33 @@
     const response = await nativeFetch(prepared.downloadUrl);
     if (!response.ok) return false;
     const blob = await response.blob();
-    const fileHandle = await selectedDirectoryHandle.getFileHandle(prepared.filename, { create: true });
+    const fileHandle = await selectedDirectoryHandle.getFileHandle(prepared.filename || 'lyrics.docx', { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(blob);
     await writable.close();
-    alert('DOCX 已保存到你选择的文件夹');
     return true;
   }
 
-  function navigateDownload(prepared) {
+  function openDownloadLink(prepared) {
+    const url = new URL(prepared.downloadUrl, window.location.origin).toString();
     const link = document.createElement('a');
-    link.href = prepared.downloadUrl;
+    link.href = url;
     link.download = prepared.filename || 'lyrics.docx';
     link.rel = 'noopener';
     document.body.append(link);
     link.click();
     link.remove();
+    window.setTimeout(() => {
+      try { window.location.href = url; } catch {}
+    }, 160);
   }
 
-  function hideLocalSaveButtons(root = document) {
-    root.querySelectorAll('button[data-history-action="save-docx"]').forEach((button) => {
-      button.remove();
-    });
-  }
-
-  async function chooseDownloadDirectory(input) {
-    if (!window.showDirectoryPicker) {
-      if (input && input.value !== defaultDownloadText) input.value = defaultDownloadText;
-      alert('当前浏览器不支持网页选择下载文件夹  将使用浏览器默认下载路径');
-      return;
-    }
-    try {
-      selectedDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-      if (input) input.value = selectedDirectoryHandle.name || '已选择文件夹';
-    } catch {}
-  }
-
-  function setText(node, value) {
-    if (node && node.textContent !== value) node.textContent = value;
-  }
-
-  function setupHistoryPathUi() {
-    const input = document.getElementById('historyDirInput');
-    const button = document.getElementById('saveHistoryDirButton');
-    const label = input?.closest('label');
-    const span = label?.querySelector('span');
-    if (!input || !button) return;
-    setText(span, '下载位置');
-    const value = selectedDirectoryHandle?.name || defaultDownloadText;
-    if (input.value !== value) input.value = value;
-    if (input.placeholder !== defaultDownloadText) input.placeholder = defaultDownloadText;
-    if (!input.readOnly) input.readOnly = true;
-    setText(button, '选择路径');
-  }
-
-  let uiSetupTimer = 0;
-  function scheduleHistoryPathUi() {
-    if (uiSetupTimer) return;
-    uiSetupTimer = window.setTimeout(() => {
-      uiSetupTimer = 0;
-      setupHistoryPathUi();
-      hideLocalSaveButtons();
-    }, 80);
+  function installStaticHideRule() {
+    if (document.getElementById('tingyiji-history-hotfix-style')) return;
+    const style = document.createElement('style');
+    style.id = 'tingyiji-history-hotfix-style';
+    style.textContent = 'button[data-action="save"],button[data-history-action="save-docx"]{display:none!important}';
+    document.head.append(style);
   }
 
   document.addEventListener('click', async (event) => {
@@ -171,64 +155,57 @@
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      await chooseDownloadDirectory(document.getElementById('historyDirInput'));
-      setupHistoryPathUi();
+      await chooseDirectory();
       return;
     }
 
-    const button = event.target.closest('button[data-history-action]');
-    const action = button?.dataset.historyAction;
-    if (!button || !['save-docx', 'download-docx'].includes(action)) return;
+    const historyButton = event.target.closest('button[data-action], button[data-history-action]');
+    const action = historyButton?.dataset.action || historyButton?.dataset.historyAction;
+    if (!historyButton || !['save', 'save-docx', 'download', 'download-docx'].includes(action)) return;
 
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    if (action === 'save-docx') {
-      button.remove();
+    if (action === 'save' || action === 'save-docx') {
+      historyButton.remove();
       return;
     }
 
-    const entry = findEntry(button.dataset.historyId);
+    const card = historyButton.closest('.history-item');
+    const id = card?.dataset.id || historyButton.dataset.historyId;
+    const entry = historyEntry(id);
     if (!entry) {
-      alert('没有找到这条历史记录  请刷新页面后重试');
+      showMessage('没有找到这条历史记录，请刷新页面后重试。', true);
       return;
     }
 
-    button.disabled = true;
-    const originalText = button.textContent;
-    button.textContent = '生成中...';
+    const oldText = historyButton.textContent;
+    historyButton.disabled = true;
+    historyButton.textContent = '生成中...';
     try {
       const prepared = await prepareDocx(entry);
       const saved = await saveToSelectedDirectory(prepared);
-      if (!saved) navigateDownload(prepared);
+      if (saved) showMessage('DOCX 已保存到选择的路径。');
+      else {
+        openDownloadLink(prepared);
+        showMessage('DOCX 已开始下载。');
+      }
     } catch (error) {
-      alert(error.message || 'DOCX 下载失败');
+      showMessage(error.message || 'DOCX 下载失败。', true);
     } finally {
-      button.disabled = false;
-      button.textContent = originalText;
+      historyButton.disabled = false;
+      historyButton.textContent = oldText;
     }
   }, true);
 
   document.addEventListener('DOMContentLoaded', () => {
     seedDeepSeekProfile();
-    setupHistoryPathUi();
-    hideLocalSaveButtons();
-    setTimeout(scheduleHistoryPathUi, 300);
-    setTimeout(scheduleHistoryPathUi, 1000);
-    const observer = new MutationObserver((mutations) => {
-      let shouldRefresh = false;
-      for (const mutation of mutations) {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType !== 1) return;
-          hideLocalSaveButtons(node);
-          if (node.id === 'historyDirInput' || node.id === 'saveHistoryDirButton' || node.querySelector?.('#historyDirInput, #saveHistoryDirButton')) {
-            shouldRefresh = true;
-          }
-        });
-      }
-      if (shouldRefresh) scheduleHistoryPathUi();
+    installStaticHideRule();
+    normalizeHistoryPathUi();
+    document.getElementById('openHistoryButton')?.addEventListener('click', () => {
+      window.setTimeout(normalizeHistoryPathUi, 0);
+      window.setTimeout(normalizeHistoryPathUi, 120);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
   });
 })();
