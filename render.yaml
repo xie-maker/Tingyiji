@@ -3,7 +3,7 @@ services:
     name: tingyi-lyric-archive
     env: node
     plan: free
-    buildCommand: ""
+    buildCommand: npm install
     startCommand: npm start
     envVars:
       - key: HOST
