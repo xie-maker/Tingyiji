@@ -127,7 +127,7 @@
 
   async function chooseDownloadDirectory(input) {
     if (!window.showDirectoryPicker) {
-      if (input) input.value = defaultDownloadText;
+      if (input && input.value !== defaultDownloadText) input.value = defaultDownloadText;
       alert('当前浏览器不支持网页选择下载文件夹  将使用浏览器默认下载路径');
       return;
     }
@@ -137,17 +137,32 @@
     } catch {}
   }
 
+  function setText(node, value) {
+    if (node && node.textContent !== value) node.textContent = value;
+  }
+
   function setupHistoryPathUi() {
     const input = document.getElementById('historyDirInput');
     const button = document.getElementById('saveHistoryDirButton');
     const label = input?.closest('label');
     const span = label?.querySelector('span');
     if (!input || !button) return;
-    if (span) span.textContent = '下载位置';
-    input.value = selectedDirectoryHandle?.name || defaultDownloadText;
-    input.placeholder = defaultDownloadText;
-    input.readOnly = true;
-    button.textContent = '选择路径';
+    setText(span, '下载位置');
+    const value = selectedDirectoryHandle?.name || defaultDownloadText;
+    if (input.value !== value) input.value = value;
+    if (input.placeholder !== defaultDownloadText) input.placeholder = defaultDownloadText;
+    if (!input.readOnly) input.readOnly = true;
+    setText(button, '选择路径');
+  }
+
+  let uiSetupTimer = 0;
+  function scheduleHistoryPathUi() {
+    if (uiSetupTimer) return;
+    uiSetupTimer = window.setTimeout(() => {
+      uiSetupTimer = 0;
+      setupHistoryPathUi();
+      hideLocalSaveButtons();
+    }, 80);
   }
 
   document.addEventListener('click', async (event) => {
@@ -199,15 +214,20 @@
     seedDeepSeekProfile();
     setupHistoryPathUi();
     hideLocalSaveButtons();
-    setTimeout(setupHistoryPathUi, 300);
-    setTimeout(setupHistoryPathUi, 1000);
+    setTimeout(scheduleHistoryPathUi, 300);
+    setTimeout(scheduleHistoryPathUi, 1000);
     const observer = new MutationObserver((mutations) => {
+      let shouldRefresh = false;
       for (const mutation of mutations) {
         mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1) hideLocalSaveButtons(node);
+          if (node.nodeType !== 1) return;
+          hideLocalSaveButtons(node);
+          if (node.id === 'historyDirInput' || node.id === 'saveHistoryDirButton' || node.querySelector?.('#historyDirInput, #saveHistoryDirButton')) {
+            shouldRefresh = true;
+          }
         });
       }
-      setupHistoryPathUi();
+      if (shouldRefresh) scheduleHistoryPathUi();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   });
