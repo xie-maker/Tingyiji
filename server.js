@@ -8,7 +8,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_BODY = 1024 * 1024;
 const MAX_LYRICS = 12000;
-const UPSTREAM_TIMEOUT_MS = 60000;
+const UPSTREAM_TIMEOUT_MS = 180000;
 const HISTORY_DIR = process.env.HISTORY_DIR || path.join(root, '历史库');
 const QUALITY_MODE = 'lyric-master-v3-compact';
 
@@ -264,30 +264,20 @@ function buildPreferenceBrief(preferences) {
 function buildCompactV3Prompt(metadata) {
   const p = metadata.preferences;
   return [
-    '你是听译集 Lyric Master v3 资深多语种歌词译者和中文歌词编辑',
-    '你需要在一次回复内部完成 理解 初译 审校 修订 四步 但只输出最终 JSON',
+    '你是听译集 Lyric Master v3 歌词译者 只输出最终 JSON',
     `源语言 ${metadata.sourceLanguage === 'auto' ? '自动识别' : metadata.sourceLanguage}`,
     `偏好 ${buildPreferenceBrief(p)}`,
-    '第一步 全歌理解 先通读全歌 建立叙事线 人物关系 情绪曲线 意象变化 hook 和重复句',
-    '必须判断叙述者是谁 对谁说 我 你 他 她 我们分别指向谁',
-    '必须判断哪些行省略了主语或宾语 日语 韩语 西语 英语歌词常省略主语 不允许逐句猜',
-    p.moderateSubjectFill ? '中文不补主语会别扭或误解时 适度补出我 你 我们等自然主语' : '尽量不补主语 保留原文留白',
-    '原文刻意暧昧或留白时 不要硬补主语 不把关系说死',
-    '补主语不能改变叙事视角 不能新增剧情 因果 告白或情绪结论',
-    '第二步 准确初译 跨行句子先整体理解 再拆回原行 保证不误译 不漏译 不反译',
-    '第三步 审校 检查误译 漏译 指代错误 主语误补 该补未补 上下文断裂 情绪断裂 hook 不一致',
-    '第四步 中文歌词修订 输出自然 有节奏 有留白的中文歌词 不是说明文',
-    '每一行承接前后文 代词 称呼 时态 语气 重复意象 hook 译法保持一致',
-    '处理韩语时特别注意主语省略 语尾语气 敬语 英韩混写 词序 暧昧指代',
-    '处理日语时特别注意省略主语 助词关系 否定范围 暧昧指代 拟声拟态',
-    '处理英语时特别注意习语 代词指代 称呼 比喻 押韵和跨行句',
-    '避免机器翻译腔 解释腔 四字成语堆砌 过度文艺 网络流行腔 口号腔',
-    '不要把暧昧强行解释成爱情 死亡 命运 永远等原文没有的结论',
-    '必须保持输入行数 空行返回空字符串',
-    '最终译文不要使用逗号 句号 顿号 分号 冒号 问号 感叹号 引号 括号 省略号 破折号 日文标点或韩文标点',
-    '如需停顿只能用一个空格',
+    '内部流程 通读全歌 理清叙事 人物关系 情绪曲线 意象 hook 重复句 再逐行翻译和自检',
+    '所有行都参考上下文 跨行句先整体理解再拆回原行',
+    '统一 我 你 我们 他 她 称呼 时态 语气 重复意象 hook',
+    p.moderateSubjectFill ? '省略主语时结合上下文判断 中文不补会误解才自然补出我 你 我们等主语' : '尽量保留无主语留白',
+    '原文暧昧处不硬补 不把关系说死 不新增剧情 因果 告白 情绪结论',
+    '韩语日语英语混写要处理省略主语 语气 词序 称呼 外文夹杂词',
+    '译文要准确 连贯 有中文歌词感 避免机器腔 解释腔 成语堆砌 过度文艺 网络腔 口号腔',
+    '保持输入行数 空行返回空字符串',
+    '最终译文无任何标点 只用空格和换行表达停顿',
     '只返回严格 JSON 格式 {"sourceLanguage":"...","translations":["..."],"notes":["..."]}',
-    'translations 长度必须与输入 lines 完全一致 notes 最多 5 条 通常可为空数组',
+    'translations 长度必须与输入 lines 完全一致 notes 最多 3 条 通常可为空数组',
     metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
   ].filter(Boolean).join('\n');
 }
