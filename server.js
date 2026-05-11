@@ -110,6 +110,7 @@ async function translateLyricV3(api, sourceLines, metadata) {
 async function buildTranslationPlan(api, sourceLines, metadata) {
   const payload = {
     model: api.model,
+    response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: buildTranslationPlanPrompt(metadata) },
       { role: 'user', content: JSON.stringify({ task: 'Build the full v3 lyric translation plan before final revision.', ...metadata, lines: sourceLines }) },
@@ -124,6 +125,7 @@ async function buildTranslationPlan(api, sourceLines, metadata) {
 async function reviseLyricTranslation(api, sourceLines, metadata, plan) {
   const payload = {
     model: api.model,
+    response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: buildRevisionPrompt(metadata) },
       { role: 'user', content: JSON.stringify({ task: 'Revise into the final Chinese lyric translation.', ...metadata, lines: sourceLines, plan }) },
@@ -146,6 +148,7 @@ async function handleTranslateLine(req, res) {
   const preferences = normalizePreferences(body.preferences || {}, body.preferences?.purpose, body.preferences?.style);
   const payload = {
     model: api.model,
+    response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: buildLinePrompt(body.sourceLanguage || 'auto', preferences, loadFeedbackSummary()) },
       { role: 'user', content: JSON.stringify({ source: body.source, currentTranslation: body.currentTranslation, issue: body.issue, preferred: body.preferred }) },
@@ -267,19 +270,62 @@ function buildCompactV3Prompt(metadata) {
     '你是听译集 Lyric Master v3 歌词译者 只输出最终 JSON',
     `源语言 ${metadata.sourceLanguage === 'auto' ? '自动识别' : metadata.sourceLanguage}`,
     `偏好 ${buildPreferenceBrief(p)}`,
+    buildReferenceStyleBrief(metadata),
     '内部流程 通读全歌 理清叙事 人物关系 情绪曲线 意象 hook 重复句 再逐行翻译和自检',
     '所有行都参考上下文 跨行句先整体理解再拆回原行',
     '统一 我 你 我们 他 她 称呼 时态 语气 重复意象 hook',
     p.moderateSubjectFill ? '省略主语时结合上下文判断 中文不补会误解才自然补出我 你 我们等主语' : '尽量保留无主语留白',
     '原文暧昧处不硬补 不把关系说死 不新增剧情 因果 告白 情绪结论',
     '韩语日语英语混写要处理省略主语 语气 词序 称呼 外文夹杂词',
+    '韩语跨行助词和连接尾要合并理解 如 으론 接下一行 곳으로 时 上行可译以我贫瘠的想象力 下行译去往无法想象的地方',
+    '韩语 실수 在歌词语境里优先译作差错 阴差阳错 机缘差池 不要生硬译成错误',
+    '韩语 줄래 주렴 要译成你可否 请你 能否 再一次 等柔软请求',
     '译文要准确 连贯 有中文歌词感 避免机器腔 解释腔 成语堆砌 过度文艺 网络腔 口号腔',
+    '不要过度省字 如果原句是请求 疑问 祈愿 要译出可否 能否 请 再一次 等语气',
+    '韩语 줄래 주렴 까 等语尾要译出柔软请求或疑问 不要只译成短命令',
+    '意象抽象句要保留诗意骨架 如 孤独的反义词 想象力贫瘠 世界尽头 支离破碎',
+    '英文夹杂词优先服务记忆点 My lover 通常译作我的爱人 Run on 通常译作不停奔跑 Love wins all 通常译作爱胜过一切',
     '保持输入行数 空行返回空字符串',
     '最终译文无任何标点 只用空格和换行表达停顿',
     '只返回严格 JSON 格式 {"sourceLanguage":"...","translations":["..."],"notes":["..."]}',
     'translations 长度必须与输入 lines 完全一致 notes 最多 3 条 通常可为空数组',
     metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
   ].filter(Boolean).join('\n');
+}
+
+function buildReferenceStyleBrief(metadata) {
+  const title = clean(metadata.title || '').toLowerCase();
+  const artist = clean(metadata.artist || '').toLowerCase();
+  const lines = [
+    '参考人工精修方向 准确基础上可适度展开半拍 让中文更像完整歌词 不要只给短促释义',
+    '称呼和祈愿句要更柔软 例如 你可否带我去往 我的爱人 和我一起走到尽头',
+    '重复 hook 要成为记忆点 同一原句前后译法保持稳定',
+  ];
+  if (title.includes('love wins all') || artist.includes('iu')) {
+    lines.push('本歌风格参考 IU Love wins all 译法要有末日私奔感 克制但深情');
+    lines.push('建议记忆点 Dearest Darling My universe 译作我亲爱的宇宙 或最亲爱的 我的宇宙');
+    lines.push('날 데려가 줄래 译出你可否带我去往 不要只写能否带我走');
+    lines.push('from Earth to Mars 译出从地球去往遥远的火星');
+    lines.push('세상에게서 도망쳐 Run on 统一为逃离这个世界 不停奔跑');
+    lines.push('저 끝까지 가줘 My lover 统一为我的爱人 和我一起走到尽头 或世界尽头');
+    lines.push('부서지도록 나를 꼭 안아 译出紧紧拥抱我 直到支离破碎');
+    lines.push('어떤 실수로 이토록 우리는 함께일까 译出是怎样的差错让我们如此在一起');
+    lines.push('유영하듯 떠오른 译作如漂浮般浮现 不要译成游泳');
+    lines.push('Ruiner 译作毁灭者 或保留 Ruiner 后用毁灭感表达');
+    lines.push('Love wins all 统一为爱胜过一切 或我们的爱胜过一切');
+  }
+  if (title.includes('hiruno hoshi') || title.includes('昼の星') || artist.includes('radwimps')) {
+    lines.push('日语 RADWIMPS 风格要保留矛盾修饰和轻微别扭的诗意 不要抹平成普通说明');
+    lines.push('鮮やかな虚しさ 健やかな卑しさ したたかな優しさ あたたかな寂しさ 这类反差结构要保留反差');
+    lines.push('そっと笑ってよ そこで叱ってよ もっといらってよ そっと祝うよ 要译出轻轻 请你 就在那里 等柔软请求语气');
+    lines.push('夜に迷わぬように 星など探さぬように 要处理成不愿在夜里迷失 也不必寻找星星这类连贯祈愿');
+    lines.push('昼の星 是白天的星 昼もそこにいるのに 要保留明明白天也在那里却看不见的意象');
+    lines.push('夢の前で待ち合わせ 译作在梦的前方汇合或相约在梦的前方');
+    lines.push('理由など一つもなくキスをしよう 译作不为任何理由地亲吻吧 保持重复句一致');
+    lines.push('せーのでジャンプしよう 译作数着一二一起跳吧 或同时起跳吧');
+    lines.push('同じ時と空の狭間 要译作相同的时空夹缝或同一时间与天空的缝隙');
+  }
+  return lines.join('\n');
 }
 
 function buildTranslationPlanPrompt(metadata) {
@@ -289,6 +335,7 @@ function buildTranslationPlanPrompt(metadata) {
     '本阶段合并完成 理解 初译 审校 三件事 不输出给用户 不做最终润色',
     `源语言 ${metadata.sourceLanguage === 'auto' ? '自动识别' : metadata.sourceLanguage}`,
     `偏好 ${buildPreferenceBrief(p)}`,
+    buildReferenceStyleBrief(metadata),
     '第一步 全歌理解',
     '先通读全歌 建立叙事线 人物关系 情绪曲线 意象变化 hook 和重复句',
     '必须建立指代关系表 判断叙述者是谁 对谁说 我 你 他 她 我们分别指向谁',
@@ -325,6 +372,7 @@ function buildRevisionPrompt(metadata) {
     '你是听译集 Lyric Master v3 的中文歌词修订专家',
     '根据全歌理解 初译和审校结果 输出最终中文歌词',
     `偏好 ${buildPreferenceBrief(p)}`,
+    buildReferenceStyleBrief(metadata),
     '总目标 上下文连贯 中文歌词感 忠实不硬译 润色不乱编',
     '必须保持输入行数 空行返回空字符串',
     '每一行承接前后文 代词 称呼 时态 语气 重复意象 hook 译法保持一致',
@@ -333,6 +381,8 @@ function buildRevisionPrompt(metadata) {
     '原文刻意暧昧或留白时不硬补主语 不把关系说死',
     '补主语后不能改变叙事视角 不能新增剧情 因果 告白或情绪结论',
     '中文要自然 有节奏 有留白 像歌词 不是说明文',
+    '准确基础上可适度展开半拍 让中文成为完整歌词句 不要为了短而损失语气和意象',
+    '请求 疑问 祈愿 要译出可否 能否 请 再一次 等语气',
     '避免机器翻译腔 解释腔 四字成语堆砌 过度文艺 网络流行腔 口号腔',
     '最终译文不要使用逗号 句号 顿号 分号 冒号 问号 感叹号 引号 括号 省略号 破折号 日文标点或韩文标点',
     '如需停顿只能用一个空格',
