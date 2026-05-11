@@ -3,7 +3,7 @@ const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 
 const providerPresets = {
   openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4-mini', models: ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5', 'gpt-4.1-mini'] },
-  deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  deepseek: { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', models: ['deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'] },
   qwen: { label: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', models: ['qwen-plus', 'qwen-turbo', 'qwen-max'] },
   moonshot: { label: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', models: ['moonshot-v1-8k', 'moonshot-v1-32k'] },
   zhipu: { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', models: ['glm-4-flash', 'glm-4-plus'] },
@@ -21,11 +21,26 @@ const storeKeys = {
 
 const labels = {
   purpose: { reading: '阅读', subtitle: '字幕', singing: '演唱', polished: '精修' },
+  translationApproach: { naturalLyrics: '自然歌词', faithful: '忠实准确', poetic: '更有诗意', concise: '简洁直白' },
   style: { literal: '直译', natural: '自然', lyrical: '歌词化' },
   faithfulness: { balanced: '均衡', faithful: '更忠实', adaptive: '更灵活' },
   chineseTone: { lyric: '中文歌词感', plain: '清楚直白', poetic: '更有诗意', spoken: '更口语' },
-  emotionIntensity: { original: '保持原歌', restrained: '克制', intense: '浓烈' },
-  lineLength: { match: '贴近原行', short: '短句', flexible: '自然可变' },
+  emotionIntensity: { original: '贴近原歌', restrained: '更克制', intense: '更浓烈' },
+  delivery: { match: '贴近原行', short: '更短句', smooth: '更顺滑', singable: '更可唱' },
+};
+
+const approachDefaults = {
+  naturalLyrics: { style: 'lyrical', faithfulness: 'balanced', chineseTone: 'lyric' },
+  faithful: { style: 'natural', faithfulness: 'faithful', chineseTone: 'plain' },
+  poetic: { style: 'lyrical', faithfulness: 'adaptive', chineseTone: 'poetic' },
+  concise: { style: 'natural', faithfulness: 'balanced', chineseTone: 'plain' },
+};
+
+const deliveryDefaults = {
+  match: { rhythm: 'pause', lineLength: 'match' },
+  short: { rhythm: 'pause', lineLength: 'short' },
+  smooth: { rhythm: 'smooth', lineLength: 'flexible' },
+  singable: { rhythm: 'singable', lineLength: 'flexible' },
 };
 
 let translationLines = [];
@@ -191,12 +206,17 @@ function getPreferences() {
   for (const input of $$('[data-preference]')) {
     out[input.dataset.preference] = input.type === 'checkbox' ? input.checked : input.value;
   }
+  const delivery = deliveryDefaults[out.delivery] || deliveryDefaults.match;
+  out.rhythm = delivery.rhythm;
+  out.lineLength = delivery.lineLength;
+  out.moderateSubjectFill = out.moderateSubjectFill !== false;
   out.noPunctuation = true;
   return out;
 }
 function applyPreferences(preferences = {}) {
+  const normalized = normalizeUiPreferences(preferences);
   for (const input of $$('[data-preference]')) {
-    const value = preferences[input.dataset.preference];
+    const value = normalized[input.dataset.preference];
     if (value == null) continue;
     if (input.type === 'checkbox') input.checked = !!value;
     else input.value = value;
@@ -213,14 +233,57 @@ function summarizePreferences() {
   const p = getPreferences();
   el('preferenceSummary').textContent = [
     labels.purpose[p.purpose],
-    labels.style[p.style],
-    labels.faithfulness[p.faithfulness],
-    labels.chineseTone[p.chineseTone],
+    labels.translationApproach[p.translationApproach],
     labels.emotionIntensity[p.emotionIntensity],
-    labels.lineLength[p.lineLength],
-    p.keepHookConsistent ? '保留 hook' : '',
-    p.avoidOverExplain ? '少解释' : '',
+    labels.delivery[p.delivery],
   ].filter(Boolean).join(' · ');
+}
+
+function normalizeUiPreferences(preferences = {}) {
+  const approach = preferences.translationApproach || inferTranslationApproach(preferences);
+  const delivery = preferences.delivery || inferDelivery(preferences);
+  return {
+    ...approachDefaults[approach],
+    purpose: preferences.purpose || 'reading',
+    translationApproach: approach,
+    emotionIntensity: preferences.emotionIntensity || 'original',
+    delivery,
+    rhyme: preferences.rhyme || 'none',
+    slangPolicy: preferences.slangPolicy || 'naturalize',
+    preserveImagery: preferences.preserveImagery !== false,
+    keepHookConsistent: preferences.keepHookConsistent !== false,
+    moderateSubjectFill: preferences.moderateSubjectFill !== false,
+    avoidOverExplain: preferences.avoidOverExplain !== false,
+    avoidOverLiterary: preferences.avoidOverLiterary !== false,
+    avoidInventing: preferences.avoidInventing !== false,
+    noPunctuation: true,
+    customInstruction: preferences.customInstruction || '',
+    style: preferences.style || approachDefaults[approach].style,
+    faithfulness: preferences.faithfulness || approachDefaults[approach].faithfulness,
+    chineseTone: preferences.chineseTone || approachDefaults[approach].chineseTone,
+  };
+}
+
+function inferTranslationApproach(preferences = {}) {
+  if (preferences.chineseTone === 'poetic') return 'poetic';
+  if (preferences.faithfulness === 'faithful') return 'faithful';
+  if (preferences.chineseTone === 'plain') return 'concise';
+  return 'naturalLyrics';
+}
+
+function inferDelivery(preferences = {}) {
+  if (preferences.rhythm === 'singable') return 'singable';
+  if (preferences.lineLength === 'short') return 'short';
+  if (preferences.rhythm === 'smooth' || preferences.lineLength === 'flexible') return 'smooth';
+  return 'match';
+}
+
+function syncApproachDefaults() {
+  const defaults = approachDefaults[el('preferenceTranslationApproach').value] || approachDefaults.naturalLyrics;
+  for (const [key, value] of Object.entries(defaults)) {
+    const input = $(`[data-preference="${key}"]`);
+    if (input) input.value = value;
+  }
 }
 
 function historyItems() {
@@ -711,6 +774,7 @@ function bindEvents() {
     }
   });
 
+  el('preferenceTranslationApproach').addEventListener('change', syncApproachDefaults);
   for (const input of $$('[data-preference]')) {
     input.addEventListener('input', savePreferences);
     input.addEventListener('change', savePreferences);

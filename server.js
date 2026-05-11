@@ -9,7 +9,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const MAX_BODY = 1024 * 1024;
 const MAX_LYRICS = 12000;
 const HISTORY_DIR = process.env.HISTORY_DIR || path.join(root, '历史库');
-const QUALITY_MODE = 'contextual-polished-2pass';
+const QUALITY_MODE = 'lyric-master-v3';
 
 const providers = {
   openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: process.env.TRANSLATION_MODEL || 'gpt-5.4-mini', env: 'OPENAI_API_KEY', models: ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5', 'gpt-4.1-mini'] },
@@ -71,9 +71,11 @@ async function handleTranslate(req, res) {
     feedbackSummary: loadFeedbackSummary(),
   };
 
-  const draft = await buildContextDraft(api, sourceLines, metadata);
-  const polished = await polishContextualTranslation(api, sourceLines, metadata, draft);
-  const translations = Array.isArray(polished.translations) ? polished.translations : [];
+  const understanding = await buildSongUnderstanding(api, sourceLines, metadata);
+  const draft = await buildAccurateDraft(api, sourceLines, metadata, understanding);
+  const review = await reviewLyricDraft(api, sourceLines, metadata, understanding, draft);
+  const revised = await reviseLyricTranslation(api, sourceLines, metadata, understanding, draft, review);
+  const translations = Array.isArray(revised.translations) ? revised.translations : [];
   const lines = sourceLines.map((source, index) => ({
     source,
     translation: source.trim() ? removePunctuation(translations[index] || '') : '',
@@ -86,19 +88,33 @@ async function handleTranslate(req, res) {
     style: preferences.style,
     preferences,
     qualityMode: QUALITY_MODE,
-    sourceLanguage: clean(polished.sourceLanguage || draft.sourceLanguage || metadata.sourceLanguage || 'auto'),
+    sourceLanguage: clean(revised.sourceLanguage || understanding.sourceLanguage || metadata.sourceLanguage || 'auto'),
     lines,
-    notes: Array.isArray(polished.notes) ? polished.notes.map(clean).filter(Boolean).slice(0, 5) : [],
+    notes: Array.isArray(revised.notes) ? revised.notes.map(clean).filter(Boolean).slice(0, 5) : [],
     fullTranslation: lines.map((line) => line.translation).join('\n'),
   });
 }
 
-async function buildContextDraft(api, sourceLines, metadata) {
+async function buildSongUnderstanding(api, sourceLines, metadata) {
   const payload = {
     model: api.model,
     messages: [
-      { role: 'system', content: buildDraftPrompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Build a context-aware lyric translation draft.', ...metadata, lines: sourceLines }) },
+      { role: 'system', content: buildUnderstandingPrompt(metadata) },
+      { role: 'user', content: JSON.stringify({ task: 'Understand the whole song before translating.', ...metadata, lines: sourceLines }) },
+    ],
+    temperature: 0.15,
+  };
+  const parsed = parseJsonObject(await chat(api, payload));
+  if (!parsed || typeof parsed !== 'object') throw new Error('模型没有返回可用全歌理解，请重试。');
+  return parsed;
+}
+
+async function buildAccurateDraft(api, sourceLines, metadata, understanding) {
+  const payload = {
+    model: api.model,
+    messages: [
+      { role: 'system', content: buildAccurateDraftPrompt(metadata) },
+      { role: 'user', content: JSON.stringify({ task: 'Create an accurate line-by-line draft.', ...metadata, lines: sourceLines, understanding }) },
     ],
     temperature: 0.15,
   };
@@ -107,12 +123,26 @@ async function buildContextDraft(api, sourceLines, metadata) {
   return parsed;
 }
 
-async function polishContextualTranslation(api, sourceLines, metadata, draft) {
+async function reviewLyricDraft(api, sourceLines, metadata, understanding, draft) {
   const payload = {
     model: api.model,
     messages: [
-      { role: 'system', content: buildPolishPrompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Polish the lyric translation with full-song narrative continuity.', ...metadata, lines: sourceLines, draft }) },
+      { role: 'system', content: buildReviewPrompt(metadata) },
+      { role: 'user', content: JSON.stringify({ task: 'Review the draft before final lyric revision.', ...metadata, lines: sourceLines, understanding, draft }) },
+    ],
+    temperature: 0.1,
+  };
+  const parsed = parseJsonObject(await chat(api, payload));
+  if (!parsed || typeof parsed !== 'object') throw new Error('模型没有返回可用审校结果，请重试。');
+  return parsed;
+}
+
+async function reviseLyricTranslation(api, sourceLines, metadata, understanding, draft, review) {
+  const payload = {
+    model: api.model,
+    messages: [
+      { role: 'system', content: buildRevisionPrompt(metadata) },
+      { role: 'user', content: JSON.stringify({ task: 'Revise into the final Chinese lyric translation.', ...metadata, lines: sourceLines, understanding, draft, review }) },
     ],
     temperature: ['singing', 'polished'].includes(metadata.preferences.purpose) ? 0.35 : 0.25,
   };
@@ -214,39 +244,101 @@ async function chat(api, payload) {
   return Array.isArray(content) ? content.map((part) => part.text || part.content || '').join('') : String(content || '');
 }
 
-function buildDraftPrompt(metadata) {
+function buildPreferenceBrief(preferences) {
+  const p = preferences;
   return [
-    '你是资深多语种歌词译者。第一步只做全歌上下文理解和准确初译 不输出给用户',
+    `用途 ${p.purpose}`,
+    `译文取向 ${p.translationApproach}`,
+    `风格 ${p.style}`,
+    `忠实度 ${p.faithfulness}`,
+    `中文气质 ${p.chineseTone}`,
+    `情绪 ${p.emotionIntensity}`,
+    `节奏 ${p.rhythm}`,
+    `行长 ${p.lineLength}`,
+    `押韵 ${p.rhyme}`,
+    `俚语 ${p.slangPolicy}`,
+    p.preserveImagery ? '保留意象' : '',
+    p.keepHookConsistent ? '统一 hook 和重复句' : '',
+    p.moderateSubjectFill ? '中文需要时适度补主语' : '尽量不补主语',
+    p.avoidOverExplain ? '避免解释腔' : '',
+    p.avoidOverLiterary ? '避免过度文艺' : '',
+    p.avoidInventing ? '避免乱加剧情' : '',
+    p.customInstruction ? `自定义 ${p.customInstruction}` : '',
+  ].filter(Boolean).join('；');
+}
+
+function buildUnderstandingPrompt(metadata) {
+  return [
+    '你是听译集 Lyric Master v3 的全歌理解专家',
+    '本阶段只理解歌曲 不输出给用户 不做最终润色',
     `源语言 ${metadata.sourceLanguage === 'auto' ? '自动识别' : metadata.sourceLanguage}`,
-    '先通读全歌 建立叙事线 谁在说话 对谁说 情绪如何推进 意象如何重复或变化',
-    '每行都必须参考上下文 不允许孤立逐句硬译 跨行句子要合并理解再拆回原行',
-    '处理韩语时特别注意主语省略 语尾语气 敬语 英韩混写 词序和暧昧指代',
-    '处理日语时注意省略主语 助词关系 否定范围 暧昧指代和拟声拟态',
-    '处理英语时注意习语 代词指代 称呼 比喻和押韵 不要逐词硬译',
-    '返回严格 JSON 格式为 {"sourceLanguage":"...","narrative":"...","voice":"...","imagery":["..."],"hookMap":[{"source":"...","meaning":"..."}],"literalDrafts":["..."],"risks":["..."]}',
-    'literalDrafts 长度必须与输入 lines 完全一致 空行返回空字符串',
-    'literalDrafts 先求准确和连贯 可以有轻微解释 但不要添加原文没有的剧情 情绪结论或因果',
+    '先通读全歌 建立叙事线 人物关系 情绪曲线 意象变化 hook 和重复句',
+    '必须建立指代关系表 判断叙述者是谁 对谁说 我 你 他 她 我们分别指向谁',
+    '必须找出哪些行省略了主语或宾语 并说明是否需要在中文中补出',
+    '日语 韩语 西语 英语歌词常省略主语 必须结合上下文判断 不允许逐句猜',
+    '处理韩语时特别注意主语省略 语尾语气 敬语 英韩混写 词序 暧昧指代',
+    '处理日语时特别注意省略主语 助词关系 否定范围 暧昧指代 拟声拟态',
+    '处理英语时特别注意习语 代词指代 称呼 比喻 押韵和跨行句',
+    '不要把暧昧强行解释成爱情 死亡 命运 永远等原文没有的结论',
+    '返回严格 JSON 格式 {"sourceLanguage":"...","narrative":"...","voice":"...","relationshipMap":[{"term":"...","referent":"..."}],"omittedSubjects":[{"line":1,"subject":"...","confidence":"high|medium|low","shouldFillInChinese":true}],"imagery":["..."],"hookMap":[{"source":"...","meaning":"...","recommendedChinese":"..."}],"glossary":[{"source":"...","meaning":"...","translationHint":"..."}],"risks":["..."]}',
     metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
   ].join('\n');
 }
 
-function buildPolishPrompt(metadata) {
+function buildAccurateDraftPrompt(metadata) {
   const p = metadata.preferences;
   return [
-    '你是资深中文歌词编辑。第二步把初译精修成上下文连贯的中文歌词',
-    '总目标 准确理解源语言 叙事连贯 中文像歌词 最后再去标点',
+    '你是听译集 Lyric Master v3 的准确初译专家',
+    '本阶段目标是准确 连贯 不漏译 不反译 不是最终文采润色',
+    `偏好 ${buildPreferenceBrief(p)}`,
     '必须保持输入行数 空行返回空字符串',
-    '每一行都要承接前后文 代词 称呼 时态 语气 重复意象 hook 译法要一致',
-    '跨行句子必须先整体理解 再拆回原行输出 避免上下句割裂',
-    '中文要自然 有节奏和留白 避免机器翻译腔 解释腔 四字成语堆砌 过度文艺 网络流行腔 口号腔',
-    '不确定的暧昧处保留暧昧 不要擅自坐实为爱情 死亡 告别 命运 心碎 永远等原文没有的结论',
-    '韩语和英韩混写要按上下文处理 My universe My lover 等称呼 不要机械逐字',
-    `偏好 用途 ${p.purpose} 风格 ${p.style} 忠实度 ${p.faithfulness} 中文气质 ${p.chineseTone} 情绪 ${p.emotionIntensity} 节奏 ${p.rhythm} 押韵 ${p.rhyme} 行长 ${p.lineLength} 俚语 ${p.slangPolicy}`,
-    p.customInstruction ? `用户自定义偏好 ${p.customInstruction}` : '',
-    '自检后再输出 检查误译 漏译 反译 指代错误 情绪断裂 上下文不连贯 重复句不一致 中文不自然',
+    '每一行必须参考全歌理解和前后文 不允许孤立逐句硬译',
+    '跨行句子先整体理解 再拆回原行',
+    '主语省略时先按理解阶段的指代关系判断',
+    p.moderateSubjectFill ? '中文不补主语会别扭或误解时 可以适度补出自然主语' : '尽量保留原文无主语的留白',
+    '原文刻意暧昧或留白时 不要硬补主语',
+    '补主语不能改变叙事视角 不能新增剧情 因果 告白或情绪结论',
+    'hook 副歌 重复句的译法保持一致 除非原文确有变化',
+    '返回严格 JSON 格式 {"sourceLanguage":"...","literalDrafts":["..."],"notes":["..."]}',
+    'literalDrafts 长度必须与输入 lines 完全一致',
+    metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
+  ].filter(Boolean).join('\n');
+}
+
+function buildReviewPrompt(metadata) {
+  const p = metadata.preferences;
+  return [
+    '你是听译集 Lyric Master v3 的审校专家',
+    '本阶段只诊断初译问题 不输出最终译文',
+    `偏好 ${buildPreferenceBrief(p)}`,
+    '逐行检查误译 漏译 反译 指代错误 主语误补 该补未补 上下文断裂 情绪断裂',
+    '检查 我 你 我们 他 她 的关系是否突然变化',
+    '检查无主句是否被误译成泛泛陈述 或把原文暧昧补得太死',
+    '检查 hook 副歌 重复句是否统一',
+    '检查是否有机器翻译腔 解释腔 四字成语堆砌 过度文艺 网络流行腔 口号腔',
+    '只返回严格 JSON 格式 {"issues":[{"line":1,"type":"...","problem":"...","fix":"..."}],"globalFixes":["..."],"subjectFixes":["..."],"hookFixes":["..."]}',
+    '如果没有问题 issues 返回空数组',
+  ].join('\n');
+}
+
+function buildRevisionPrompt(metadata) {
+  const p = metadata.preferences;
+  return [
+    '你是听译集 Lyric Master v3 的中文歌词修订专家',
+    '根据全歌理解 初译和审校结果 输出最终中文歌词',
+    `偏好 ${buildPreferenceBrief(p)}`,
+    '总目标 上下文连贯 中文歌词感 忠实不硬译 润色不乱编',
+    '必须保持输入行数 空行返回空字符串',
+    '每一行承接前后文 代词 称呼 时态 语气 重复意象 hook 译法保持一致',
+    '跨行句子必须先整体理解 再拆回原行 避免上下句割裂',
+    p.moderateSubjectFill ? '中文不补主语会别扭或误解时 适度补出我 你 我们等自然主语' : '尽量不补主语 保留原文留白',
+    '原文刻意暧昧或留白时不硬补主语 不把关系说死',
+    '补主语后不能改变叙事视角 不能新增剧情 因果 告白或情绪结论',
+    '中文要自然 有节奏 有留白 像歌词 不是说明文',
+    '避免机器翻译腔 解释腔 四字成语堆砌 过度文艺 网络流行腔 口号腔',
     '最终译文不要使用逗号 句号 顿号 分号 冒号 问号 感叹号 引号 括号 省略号 破折号 日文标点或韩文标点',
     '如需停顿只能用一个空格',
-    '只返回严格 JSON 格式为 {"sourceLanguage":"...","translations":["..."],"notes":["..."]}',
+    '只返回严格 JSON 格式 {"sourceLanguage":"...","translations":["..."],"notes":["..."]}',
     'translations 长度必须与输入 lines 完全一致 notes 最多 5 条 通常可为空数组',
     metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
   ].filter(Boolean).join('\n');
@@ -257,6 +349,7 @@ function buildLinePrompt(sourceLanguage, preferences, feedbackSummary) {
     '你是资深歌词译者 现在只调整一行译文',
     `源语言 ${sourceLanguage === 'auto' ? '自动识别' : sourceLanguage}`,
     '目标 根据反馈修正这一句 保持原意 语气 意象 中文歌词感',
+    preferences.moderateSubjectFill ? '如果这一句省略主语且中文不补会误解 可以结合当前句和反馈适度补出自然主语' : '尽量保留无主语留白',
     '不要添加原文没有的剧情 因果 告白或情绪结论',
     '不要使用任何标点 如需停顿只用空格',
     `偏好 ${JSON.stringify(preferences)}`,
@@ -268,6 +361,8 @@ function buildLinePrompt(sourceLanguage, preferences, feedbackSummary) {
 function normalizePreferences(raw = {}, fallbackPurpose = 'reading', fallbackStyle = 'natural') {
   const choices = {
     purpose: ['reading', 'subtitle', 'singing', 'polished'],
+    translationApproach: ['naturalLyrics', 'faithful', 'poetic', 'concise'],
+    delivery: ['match', 'short', 'smooth', 'singable'],
     style: ['literal', 'natural', 'lyrical'],
     faithfulness: ['balanced', 'faithful', 'adaptive'],
     chineseTone: ['lyric', 'plain', 'poetic', 'spoken'],
@@ -278,24 +373,57 @@ function normalizePreferences(raw = {}, fallbackPurpose = 'reading', fallbackSty
     slangPolicy: ['naturalize', 'keepFlavor', 'plainExplain'],
   };
   const pick = (key, fallback) => choices[key].includes(raw[key]) ? raw[key] : fallback;
+  const approach = pick('translationApproach', inferTranslationApproach(raw));
+  const delivery = pick('delivery', inferDelivery(raw));
+  const approachDefaults = {
+    naturalLyrics: { style: 'lyrical', faithfulness: 'balanced', chineseTone: 'lyric' },
+    faithful: { style: 'natural', faithfulness: 'faithful', chineseTone: 'plain' },
+    poetic: { style: 'lyrical', faithfulness: 'adaptive', chineseTone: 'poetic' },
+    concise: { style: 'natural', faithfulness: 'balanced', chineseTone: 'plain' },
+  }[approach];
+  const deliveryDefaults = {
+    match: { rhythm: 'pause', lineLength: 'match' },
+    short: { rhythm: 'pause', lineLength: 'short' },
+    smooth: { rhythm: 'smooth', lineLength: 'flexible' },
+    singable: { rhythm: 'singable', lineLength: 'flexible' },
+  }[delivery];
   return {
     purpose: pick('purpose', choices.purpose.includes(fallbackPurpose) ? fallbackPurpose : 'reading'),
-    style: pick('style', choices.style.includes(fallbackStyle) ? fallbackStyle : 'lyrical'),
-    faithfulness: pick('faithfulness', 'balanced'),
-    chineseTone: pick('chineseTone', 'lyric'),
+    translationApproach: approach,
+    delivery,
+    style: pick('style', choices.style.includes(fallbackStyle) ? fallbackStyle : approachDefaults.style),
+    faithfulness: pick('faithfulness', approachDefaults.faithfulness),
+    chineseTone: pick('chineseTone', approachDefaults.chineseTone),
     emotionIntensity: pick('emotionIntensity', 'original'),
-    rhythm: pick('rhythm', 'pause'),
+    rhythm: pick('rhythm', deliveryDefaults.rhythm),
     rhyme: pick('rhyme', 'none'),
-    lineLength: pick('lineLength', 'match'),
+    lineLength: pick('lineLength', deliveryDefaults.lineLength),
     slangPolicy: pick('slangPolicy', 'naturalize'),
     preserveImagery: raw.preserveImagery !== false,
     keepHookConsistent: raw.keepHookConsistent !== false,
+    moderateSubjectFill: raw.moderateSubjectFill !== false,
     avoidOverExplain: raw.avoidOverExplain !== false,
     avoidOverLiterary: raw.avoidOverLiterary !== false,
     avoidInventing: raw.avoidInventing !== false,
     noPunctuation: true,
     customInstruction: clean(raw.customInstruction || '').slice(0, 240),
   };
+}
+
+function inferTranslationApproach(raw = {}) {
+  if (raw.translationApproach) return raw.translationApproach;
+  if (raw.chineseTone === 'poetic') return 'poetic';
+  if (raw.faithfulness === 'faithful') return 'faithful';
+  if (raw.chineseTone === 'plain') return 'concise';
+  return 'naturalLyrics';
+}
+
+function inferDelivery(raw = {}) {
+  if (raw.delivery) return raw.delivery;
+  if (raw.rhythm === 'singable') return 'singable';
+  if (raw.lineLength === 'short') return 'short';
+  if (raw.rhythm === 'smooth' || raw.lineLength === 'flexible') return 'smooth';
+  return 'match';
 }
 
 function normalizeApi(raw) {

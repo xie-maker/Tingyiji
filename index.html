@@ -163,32 +163,32 @@
 
           <div class="controls">
             <details class="preference-panel" id="preferencePanel">
-              <summary><div><span class="preference-title">翻译偏好</span><strong id="preferenceSummary">阅读 · 自然 · 均衡 · 中文歌词感</strong></div><span class="preference-toggle">调整</span></summary>
+              <summary><div><span class="preference-title">翻译偏好</span><strong id="preferenceSummary">阅读 · 自然歌词 · 贴近原歌 · 贴近原行</strong></div><span class="preference-toggle">调整</span></summary>
               <div class="preference-section">
                 <div class="preference-section-head">
-                  <strong>常用偏好</strong>
-                  <span>控制译文最主要的取向</span>
+                  <strong>简洁偏好</strong>
+                  <span>先选最影响译文气质的 4 件事</span>
                 </div>
                 <div class="preference-grid preference-grid-basic">
-                <label><span>用途</span><select id="preferencePurpose" data-preference="purpose"><option value="reading">阅读</option><option value="subtitle">字幕</option><option value="singing">演唱</option><option value="polished">精修</option></select></label>
-                <label><span>基础风格</span><select id="preferenceStyle" data-preference="style"><option value="literal">直译</option><option value="natural">自然</option><option value="lyrical">歌词化</option></select></label>
-                <label><span>忠实度</span><select data-preference="faithfulness"><option value="balanced">均衡</option><option value="faithful">更忠实</option><option value="adaptive">更灵活</option></select></label>
-                <label><span>中文气质</span><select data-preference="chineseTone"><option value="lyric">中文歌词感</option><option value="plain">清楚直白</option><option value="poetic">更有诗意</option><option value="spoken">更口语</option></select></label>
+                  <label><span>用途</span><select id="preferencePurpose" data-preference="purpose"><option value="reading">阅读</option><option value="subtitle">字幕</option><option value="singing">演唱</option><option value="polished">精修</option></select></label>
+                  <label><span>译文取向</span><select id="preferenceTranslationApproach" data-preference="translationApproach"><option value="naturalLyrics">自然歌词</option><option value="faithful">忠实准确</option><option value="poetic">更有诗意</option><option value="concise">简洁直白</option></select></label>
+                  <label><span>情绪力度</span><select data-preference="emotionIntensity"><option value="original">贴近原歌</option><option value="restrained">更克制</option><option value="intense">更浓烈</option></select></label>
+                  <label><span>行文节奏</span><select data-preference="delivery"><option value="match">贴近原行</option><option value="short">更短句</option><option value="smooth">更顺滑</option><option value="singable">更可唱</option></select></label>
                 </div>
               </div>
               <details class="advanced-preferences">
                 <summary>高级偏好</summary>
                 <div class="preference-grid">
-                <label><span>情绪强度</span><select data-preference="emotionIntensity"><option value="original">保持原歌</option><option value="restrained">更克制</option><option value="intense">更浓烈</option></select></label>
-                <label><span>节奏处理</span><select data-preference="rhythm"><option value="pause">保留停顿</option><option value="smooth">更顺滑</option><option value="singable">更可唱</option></select></label>
-                <label><span>押韵倾向</span><select data-preference="rhyme"><option value="none">不强求押韵</option><option value="light">轻微押韵</option><option value="strong">尽量押韵</option></select></label>
-                <label><span>行长</span><select data-preference="lineLength"><option value="match">贴近原行</option><option value="short">短句优先</option><option value="flexible">自然可变</option></select></label>
-                <label><span>俚语处理</span><select data-preference="slangPolicy"><option value="naturalize">自然转写</option><option value="keepFlavor">保留语气</option><option value="plainExplain">转成易懂中文</option></select></label>
+                  <label><span>忠实度</span><select data-preference="faithfulness"><option value="balanced">均衡</option><option value="faithful">更忠实</option><option value="adaptive">更灵活</option></select></label>
+                  <label><span>中文气质</span><select data-preference="chineseTone"><option value="lyric">中文歌词感</option><option value="plain">清楚直白</option><option value="poetic">更有诗意</option><option value="spoken">更口语</option></select></label>
+                  <label><span>基础风格</span><select id="preferenceStyle" data-preference="style"><option value="literal">直译</option><option value="natural">自然</option><option value="lyrical">歌词化</option></select></label>
+                  <label><span>押韵倾向</span><select data-preference="rhyme"><option value="none">不强求押韵</option><option value="light">轻微押韵</option><option value="strong">尽量押韵</option></select></label>
+                  <label><span>俚语处理</span><select data-preference="slangPolicy"><option value="naturalize">自然转写</option><option value="keepFlavor">保留语气</option><option value="plainExplain">转成易懂中文</option></select></label>
                 </div>
               <div class="preference-checks">
-                <label><input type="checkbox" data-preference="preserveImagery" checked /> 保留意象</label><label><input type="checkbox" data-preference="keepHookConsistent" checked /> 统一重复句和 hook</label><label><input type="checkbox" data-preference="avoidOverExplain" checked /> 避免解释腔</label><label><input type="checkbox" data-preference="avoidOverLiterary" checked /> 避免过度文艺</label><label><input type="checkbox" data-preference="avoidInventing" checked /> 避免乱加剧情</label><label><input type="checkbox" data-preference="noPunctuation" checked disabled /> 保持无标点输出</label>
+                <label><input type="checkbox" data-preference="preserveImagery" checked /> 保留意象</label><label><input type="checkbox" data-preference="keepHookConsistent" checked /> 统一重复句和 hook</label><label><input type="checkbox" data-preference="moderateSubjectFill" checked /> 适度补主语</label><label><input type="checkbox" data-preference="avoidOverExplain" checked /> 避免解释腔</label><label><input type="checkbox" data-preference="avoidOverLiterary" checked /> 避免过度文艺</label><label><input type="checkbox" data-preference="avoidInventing" checked /> 避免乱加剧情</label><label><input type="checkbox" data-preference="noPunctuation" checked disabled /> 保持无标点输出</label>
               </div>
-              <label class="preference-custom"><span>自定义偏好</span><textarea data-preference="customInstruction" rows="2" maxlength="240" placeholder="例如：更像林夕一点  少解释  保留孤独感"></textarea></label>
+              <label class="preference-custom"><span>自定义偏好</span><textarea data-preference="customInstruction" rows="2" maxlength="240" placeholder="例如：更克制  少解释  保留孤独感  hook 保持一致"></textarea></label>
               </details>
             </details>
             <div class="button-row"><button class="button secondary" type="button" id="clearButton">清空</button><button class="button primary" type="submit" id="translateButton">开始翻译</button></div>
@@ -203,7 +203,7 @@
       </section>
     </main>
 
-    <script src="/network.js?v=20260511-workbench" defer></script>
-    <script src="/app.js?v=20260511-workbench" defer></script>
+    <script src="/network.js?v=20260511-v3" defer></script>
+    <script src="/app.js?v=20260511-v3" defer></script>
   </body>
 </html>
