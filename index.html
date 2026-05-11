@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>听译集</title>
-    <link rel="stylesheet" href="/styles.css?v=20260510-history-download-2" />
+    <link rel="stylesheet" href="/styles.css?v=20260511-workbench" />
   </head>
   <body>
     <main class="shell">
@@ -12,12 +12,13 @@
         <div class="brand-block">
           <p class="eyebrow">Tingyi Lyric Archive</p>
           <h1>听译集</h1>
-          <div class="status-pill" id="statusPill">本地运行</div>
+          <p class="brand-subtitle">外文歌词听译、润色、归档</p>
+          <div class="status-pill" id="statusPill">浏览器本地保存</div>
         </div>
 
         <section class="api-summary-card" aria-label="API 接口">
           <div>
-            <h2>API 接口</h2>
+            <h2>当前接口</h2>
             <p id="apiSummary">OpenAI / gpt-5.4-mini</p>
           </div>
           <div class="summary-actions">
@@ -163,21 +164,32 @@
           <div class="controls">
             <details class="preference-panel" id="preferencePanel">
               <summary><div><span class="preference-title">翻译偏好</span><strong id="preferenceSummary">阅读 · 自然 · 均衡 · 中文歌词感</strong></div><span class="preference-toggle">调整</span></summary>
-              <div class="preference-grid">
+              <div class="preference-section">
+                <div class="preference-section-head">
+                  <strong>常用偏好</strong>
+                  <span>控制译文最主要的取向</span>
+                </div>
+                <div class="preference-grid preference-grid-basic">
                 <label><span>用途</span><select id="preferencePurpose" data-preference="purpose"><option value="reading">阅读</option><option value="subtitle">字幕</option><option value="singing">演唱</option><option value="polished">精修</option></select></label>
                 <label><span>基础风格</span><select id="preferenceStyle" data-preference="style"><option value="literal">直译</option><option value="natural">自然</option><option value="lyrical">歌词化</option></select></label>
                 <label><span>忠实度</span><select data-preference="faithfulness"><option value="balanced">均衡</option><option value="faithful">更忠实</option><option value="adaptive">更灵活</option></select></label>
                 <label><span>中文气质</span><select data-preference="chineseTone"><option value="lyric">中文歌词感</option><option value="plain">清楚直白</option><option value="poetic">更有诗意</option><option value="spoken">更口语</option></select></label>
+                </div>
+              </div>
+              <details class="advanced-preferences">
+                <summary>高级偏好</summary>
+                <div class="preference-grid">
                 <label><span>情绪强度</span><select data-preference="emotionIntensity"><option value="original">保持原歌</option><option value="restrained">更克制</option><option value="intense">更浓烈</option></select></label>
                 <label><span>节奏处理</span><select data-preference="rhythm"><option value="pause">保留停顿</option><option value="smooth">更顺滑</option><option value="singable">更可唱</option></select></label>
                 <label><span>押韵倾向</span><select data-preference="rhyme"><option value="none">不强求押韵</option><option value="light">轻微押韵</option><option value="strong">尽量押韵</option></select></label>
                 <label><span>行长</span><select data-preference="lineLength"><option value="match">贴近原行</option><option value="short">短句优先</option><option value="flexible">自然可变</option></select></label>
                 <label><span>俚语处理</span><select data-preference="slangPolicy"><option value="naturalize">自然转写</option><option value="keepFlavor">保留语气</option><option value="plainExplain">转成易懂中文</option></select></label>
-              </div>
+                </div>
               <div class="preference-checks">
                 <label><input type="checkbox" data-preference="preserveImagery" checked /> 保留意象</label><label><input type="checkbox" data-preference="keepHookConsistent" checked /> 统一重复句和 hook</label><label><input type="checkbox" data-preference="avoidOverExplain" checked /> 避免解释腔</label><label><input type="checkbox" data-preference="avoidOverLiterary" checked /> 避免过度文艺</label><label><input type="checkbox" data-preference="avoidInventing" checked /> 避免乱加剧情</label><label><input type="checkbox" data-preference="noPunctuation" checked disabled /> 保持无标点输出</label>
               </div>
               <label class="preference-custom"><span>自定义偏好</span><textarea data-preference="customInstruction" rows="2" maxlength="240" placeholder="例如：更像林夕一点  少解释  保留孤独感"></textarea></label>
+              </details>
             </details>
             <div class="button-row"><button class="button secondary" type="button" id="clearButton">清空</button><button class="button primary" type="submit" id="translateButton">开始翻译</button></div>
           </div>
@@ -186,12 +198,12 @@
 
         <section class="result-panel" aria-label="翻译结果">
           <div class="panel-head"><h2>译文</h2><button class="button ghost" type="button" id="feedbackButton" disabled>反馈</button></div>
-          <div class="result-list empty" id="resultList"><div class="empty-state"><strong>译文会显示在这里</strong><span>保持原歌词换行，逐行对照外文与中文。</span></div></div>
+          <div class="result-list empty" id="resultList"><div class="empty-state"><strong>等待生成译文</strong><span>粘贴外文歌词后，这里会生成逐行中文译文，并自动进入历史库。</span></div></div>
         </section>
       </section>
     </main>
 
-    <script src="/network.js?v=20260510-history-download-2" defer></script>
-    <script src="/app.js?v=20260510-history-download-2" defer></script>
+    <script src="/network.js?v=20260511-workbench" defer></script>
+    <script src="/app.js?v=20260511-workbench" defer></script>
   </body>
 </html>

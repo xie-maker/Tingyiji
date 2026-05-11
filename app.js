@@ -270,7 +270,7 @@ function renderEmptyResult() {
   currentHistoryId = '';
   el('feedbackButton').disabled = true;
   el('resultList').className = 'result-list empty';
-  el('resultList').innerHTML = '<div class="empty-state"><strong>译文会显示在这里</strong><span>保持原歌词换行，逐行对照外文与中文。</span></div>';
+  el('resultList').innerHTML = '<div class="empty-state"><strong>等待生成译文</strong><span>粘贴外文歌词后，这里会生成逐行中文译文，并自动进入历史库。</span></div>';
 }
 function renderTranslations(lines = [], notes = []) {
   translationLines = lines.map((line) => ({ source: text(line.source), translation: text(line.translation) }));
@@ -330,7 +330,6 @@ function renderHistory() {
       <p></p>
       <div class="history-actions">
         <button class="button ghost compact" data-action="load">打开</button>
-        <button class="button ghost compact" data-action="save">保存到本地历史库</button>
         <button class="button ghost compact" data-action="download">下载 DOCX</button>
         <button class="button ghost compact" data-action="retranslate">应用反馈重译</button>
         <button class="button ghost compact" data-action="delete">删除</button>
@@ -507,7 +506,7 @@ async function translate() {
   } finally {
     el('translateButton').disabled = false;
     el('translateButton').textContent = '开始翻译';
-    el('statusPill').textContent = '本地运行';
+    el('statusPill').textContent = '浏览器本地保存';
   }
 }
 
@@ -616,7 +615,6 @@ function bindEvents() {
         loadHistoryEntry(id);
         el('translateForm').requestSubmit();
       }
-      if (button.dataset.action === 'save') await saveDocx(item, 'save');
       if (button.dataset.action === 'download') await saveDocx(item, 'download');
     } catch (error) {
       showMessage(error.message, true);

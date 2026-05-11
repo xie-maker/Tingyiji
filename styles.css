@@ -79,6 +79,14 @@ h2 {
   font-size: 18px;
 }
 
+.brand-subtitle {
+  max-width: 280px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
 .status-pill {
   width: fit-content;
   margin-top: 16px;
@@ -105,6 +113,14 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
+  padding: 14px 16px;
+  background: rgba(254, 255, 252, 0.7);
+  box-shadow: 0 12px 34px rgba(20, 55, 38, 0.07);
+}
+
+.api-summary-card h2 {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .summary-actions {
@@ -321,7 +337,7 @@ h2 {
 }
 
 .history-filter select,
-history-path input,
+.history-path input,
 .song-meta input,
 .song-meta select {
   width: 100%;
@@ -685,8 +701,70 @@ textarea:focus {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  border-top: 1px solid var(--line);
   padding: 12px;
+}
+
+.preference-section {
+  border-top: 1px solid var(--line);
+}
+
+.preference-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 0;
+}
+
+.preference-section-head strong,
+.advanced-preferences > summary {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.preference-section-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preference-grid-basic {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.advanced-preferences {
+  border-top: 1px solid var(--line);
+}
+
+.advanced-preferences > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.advanced-preferences > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-preferences > summary::after {
+  content: "展开";
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.advanced-preferences[open] > summary::after {
+  content: "收起";
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
 }
 
 .preference-grid label,
@@ -929,6 +1007,7 @@ textarea:focus {
 
 @media (max-width: 560px) {
   .preference-grid,
+  .preference-grid-basic,
   .preference-checks {
     grid-template-columns: 1fr;
   }
