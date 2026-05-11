@@ -8,6 +8,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MAX_BODY = 1024 * 1024;
 const MAX_LYRICS = 12000;
+const UPSTREAM_TIMEOUT_MS = 60000;
 const HISTORY_DIR = process.env.HISTORY_DIR || path.join(root, '历史库');
 const QUALITY_MODE = 'lyric-master-v3';
 
@@ -71,10 +72,8 @@ async function handleTranslate(req, res) {
     feedbackSummary: loadFeedbackSummary(),
   };
 
-  const understanding = await buildSongUnderstanding(api, sourceLines, metadata);
-  const draft = await buildAccurateDraft(api, sourceLines, metadata, understanding);
-  const review = await reviewLyricDraft(api, sourceLines, metadata, understanding, draft);
-  const revised = await reviseLyricTranslation(api, sourceLines, metadata, understanding, draft, review);
+  const plan = await buildTranslationPlan(api, sourceLines, metadata);
+  const revised = await reviseLyricTranslation(api, sourceLines, metadata, plan);
   const translations = Array.isArray(revised.translations) ? revised.translations : [];
   const lines = sourceLines.map((source, index) => ({
     source,
@@ -88,33 +87,19 @@ async function handleTranslate(req, res) {
     style: preferences.style,
     preferences,
     qualityMode: QUALITY_MODE,
-    sourceLanguage: clean(revised.sourceLanguage || understanding.sourceLanguage || metadata.sourceLanguage || 'auto'),
+    sourceLanguage: clean(revised.sourceLanguage || plan.sourceLanguage || metadata.sourceLanguage || 'auto'),
     lines,
     notes: Array.isArray(revised.notes) ? revised.notes.map(clean).filter(Boolean).slice(0, 5) : [],
     fullTranslation: lines.map((line) => line.translation).join('\n'),
   });
 }
 
-async function buildSongUnderstanding(api, sourceLines, metadata) {
+async function buildTranslationPlan(api, sourceLines, metadata) {
   const payload = {
     model: api.model,
     messages: [
-      { role: 'system', content: buildUnderstandingPrompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Understand the whole song before translating.', ...metadata, lines: sourceLines }) },
-    ],
-    temperature: 0.15,
-  };
-  const parsed = parseJsonObject(await chat(api, payload));
-  if (!parsed || typeof parsed !== 'object') throw new Error('模型没有返回可用全歌理解，请重试。');
-  return parsed;
-}
-
-async function buildAccurateDraft(api, sourceLines, metadata, understanding) {
-  const payload = {
-    model: api.model,
-    messages: [
-      { role: 'system', content: buildAccurateDraftPrompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Create an accurate line-by-line draft.', ...metadata, lines: sourceLines, understanding }) },
+      { role: 'system', content: buildTranslationPlanPrompt(metadata) },
+      { role: 'user', content: JSON.stringify({ task: 'Build the full v3 lyric translation plan before final revision.', ...metadata, lines: sourceLines }) },
     ],
     temperature: 0.15,
   };
@@ -123,26 +108,12 @@ async function buildAccurateDraft(api, sourceLines, metadata, understanding) {
   return parsed;
 }
 
-async function reviewLyricDraft(api, sourceLines, metadata, understanding, draft) {
-  const payload = {
-    model: api.model,
-    messages: [
-      { role: 'system', content: buildReviewPrompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Review the draft before final lyric revision.', ...metadata, lines: sourceLines, understanding, draft }) },
-    ],
-    temperature: 0.1,
-  };
-  const parsed = parseJsonObject(await chat(api, payload));
-  if (!parsed || typeof parsed !== 'object') throw new Error('模型没有返回可用审校结果，请重试。');
-  return parsed;
-}
-
-async function reviseLyricTranslation(api, sourceLines, metadata, understanding, draft, review) {
+async function reviseLyricTranslation(api, sourceLines, metadata, plan) {
   const payload = {
     model: api.model,
     messages: [
       { role: 'system', content: buildRevisionPrompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Revise into the final Chinese lyric translation.', ...metadata, lines: sourceLines, understanding, draft, review }) },
+      { role: 'user', content: JSON.stringify({ task: 'Revise into the final Chinese lyric translation.', ...metadata, lines: sourceLines, plan }) },
     ],
     temperature: ['singing', 'polished'].includes(metadata.preferences.purpose) ? 0.35 : 0.25,
   };
@@ -233,15 +204,25 @@ async function handleSaveDocx(req, res) {
 }
 
 async function chat(api, payload) {
-  const response = await fetch(api.baseUrl + '/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${api.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error?.message || data.message || `${api.label} 请求失败，状态码 ${response.status}。`);
-  const content = data.choices?.[0]?.message?.content;
-  return Array.isArray(content) ? content.map((part) => part.text || part.content || '').join('') : String(content || '');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    const response = await fetch(api.baseUrl + '/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error?.message || data.message || `${api.label} 请求失败，状态码 ${response.status}。`);
+    const content = data.choices?.[0]?.message?.content;
+    return Array.isArray(content) ? content.map((part) => part.text || part.content || '').join('') : String(content || '');
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(`${api.label} 响应超时，请稍后重试或换用更快的模型。`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function buildPreferenceBrief(preferences) {
@@ -267,11 +248,14 @@ function buildPreferenceBrief(preferences) {
   ].filter(Boolean).join('；');
 }
 
-function buildUnderstandingPrompt(metadata) {
+function buildTranslationPlanPrompt(metadata) {
+  const p = metadata.preferences;
   return [
-    '你是听译集 Lyric Master v3 的全歌理解专家',
-    '本阶段只理解歌曲 不输出给用户 不做最终润色',
+    '你是听译集 Lyric Master v3 的翻译策划和审校专家',
+    '本阶段合并完成 理解 初译 审校 三件事 不输出给用户 不做最终润色',
     `源语言 ${metadata.sourceLanguage === 'auto' ? '自动识别' : metadata.sourceLanguage}`,
+    `偏好 ${buildPreferenceBrief(p)}`,
+    '第一步 全歌理解',
     '先通读全歌 建立叙事线 人物关系 情绪曲线 意象变化 hook 和重复句',
     '必须建立指代关系表 判断叙述者是谁 对谁说 我 你 他 她 我们分别指向谁',
     '必须找出哪些行省略了主语或宾语 并说明是否需要在中文中补出',
@@ -280,17 +264,7 @@ function buildUnderstandingPrompt(metadata) {
     '处理日语时特别注意省略主语 助词关系 否定范围 暧昧指代 拟声拟态',
     '处理英语时特别注意习语 代词指代 称呼 比喻 押韵和跨行句',
     '不要把暧昧强行解释成爱情 死亡 命运 永远等原文没有的结论',
-    '返回严格 JSON 格式 {"sourceLanguage":"...","narrative":"...","voice":"...","relationshipMap":[{"term":"...","referent":"..."}],"omittedSubjects":[{"line":1,"subject":"...","confidence":"high|medium|low","shouldFillInChinese":true}],"imagery":["..."],"hookMap":[{"source":"...","meaning":"...","recommendedChinese":"..."}],"glossary":[{"source":"...","meaning":"...","translationHint":"..."}],"risks":["..."]}',
-    metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
-  ].join('\n');
-}
-
-function buildAccurateDraftPrompt(metadata) {
-  const p = metadata.preferences;
-  return [
-    '你是听译集 Lyric Master v3 的准确初译专家',
-    '本阶段目标是准确 连贯 不漏译 不反译 不是最终文采润色',
-    `偏好 ${buildPreferenceBrief(p)}`,
+    '第二步 准确初译',
     '必须保持输入行数 空行返回空字符串',
     '每一行必须参考全歌理解和前后文 不允许孤立逐句硬译',
     '跨行句子先整体理解 再拆回原行',
@@ -299,26 +273,16 @@ function buildAccurateDraftPrompt(metadata) {
     '原文刻意暧昧或留白时 不要硬补主语',
     '补主语不能改变叙事视角 不能新增剧情 因果 告白或情绪结论',
     'hook 副歌 重复句的译法保持一致 除非原文确有变化',
-    '返回严格 JSON 格式 {"sourceLanguage":"...","literalDrafts":["..."],"notes":["..."]}',
-    'literalDrafts 长度必须与输入 lines 完全一致',
-    metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
-  ].filter(Boolean).join('\n');
-}
-
-function buildReviewPrompt(metadata) {
-  const p = metadata.preferences;
-  return [
-    '你是听译集 Lyric Master v3 的审校专家',
-    '本阶段只诊断初译问题 不输出最终译文',
-    `偏好 ${buildPreferenceBrief(p)}`,
+    '第三步 审校诊断',
     '逐行检查误译 漏译 反译 指代错误 主语误补 该补未补 上下文断裂 情绪断裂',
     '检查 我 你 我们 他 她 的关系是否突然变化',
     '检查无主句是否被误译成泛泛陈述 或把原文暧昧补得太死',
     '检查 hook 副歌 重复句是否统一',
     '检查是否有机器翻译腔 解释腔 四字成语堆砌 过度文艺 网络流行腔 口号腔',
-    '只返回严格 JSON 格式 {"issues":[{"line":1,"type":"...","problem":"...","fix":"..."}],"globalFixes":["..."],"subjectFixes":["..."],"hookFixes":["..."]}',
-    '如果没有问题 issues 返回空数组',
-  ].join('\n');
+    '返回严格 JSON 格式 {"sourceLanguage":"...","narrative":"...","voice":"...","relationshipMap":[{"term":"...","referent":"..."}],"omittedSubjects":[{"line":1,"subject":"...","confidence":"high|medium|low","shouldFillInChinese":true}],"imagery":["..."],"hookMap":[{"source":"...","meaning":"...","recommendedChinese":"..."}],"glossary":[{"source":"...","meaning":"...","translationHint":"..."}],"literalDrafts":["..."],"review":{"issues":[{"line":1,"type":"...","problem":"...","fix":"..."}],"globalFixes":["..."],"subjectFixes":["..."],"hookFixes":["..."]},"risks":["..."]}',
+    'literalDrafts 长度必须与输入 lines 完全一致',
+    metadata.feedbackSummary ? `历史质量反馈摘要 ${metadata.feedbackSummary}` : '历史质量反馈摘要 暂无',
+  ].filter(Boolean).join('\n');
 }
 
 function buildRevisionPrompt(metadata) {
