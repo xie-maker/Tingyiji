@@ -383,34 +383,6 @@ h2 {
   background: #fbfffc;
 }
 
-.share-list {
-  display: grid;
-  gap: 10px;
-}
-
-.share-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
-  background: #fbfffc;
-}
-
-.share-item a {
-  color: var(--accent-dark);
-  overflow-wrap: anywhere;
-}
-
-.share-tip {
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
 .history-item span,
 .history-item p,
 .history-empty {
@@ -1034,8 +1006,7 @@ textarea:focus {
   .history-path,
   .feedback-grid,
   .feedback-line-text,
-  .feedback-line-controls,
-  .share-item {
+  .feedback-line-controls {
     grid-template-columns: 1fr;
   }
 

@@ -145,6 +145,7 @@ function createDocx(entry) {
   const meta = [
     paragraph(new Date(entry.createdAt || Date.now()).toLocaleString('zh-CN'), { align: 'right', size: 24 }),
     paragraph(entry.sourceLanguage || 'auto', { align: 'right', size: 24 }),
+    paragraph(preferenceSummary(entry.preferences), { align: 'right', size: 24 }),
     paragraph(' ', { size: 24 }),
   ].join('');
   const source = String(entry.lyrics || '').split('\n').map((line) => paragraph(line, { size: 24, eastAsia: '宋体', ascii: 'Times New Roman' })).join('');
@@ -164,6 +165,27 @@ function paragraph(value, options = {}) {
   const ascii = options.ascii || 'Times New Roman';
   const bold = options.bold ? '<w:b/><w:bCs/>' : '';
   return `<w:p><w:pPr><w:jc w:val="${align}"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="${ascii}" w:hAnsi="${ascii}" w:eastAsia="${eastAsia}" w:cs="Times New Roman"/>${bold}<w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr><w:t xml:space="preserve">${escapeXml(value || ' ')}</w:t></w:r></w:p>`;
+}
+function preferenceSummary(preferences = {}) {
+  const labels = {
+    purpose: { reading: '阅读', subtitle: '字幕', singing: '演唱', polished: '精修' },
+    translationApproach: { naturalLyrics: '自然歌词', faithful: '忠实准确', poetic: '更有诗意', concise: '简洁直白' },
+    emotionIntensity: { original: '贴近原歌', restrained: '更克制', intense: '更浓烈' },
+    delivery: { match: '贴近原行', short: '更短句', smooth: '更顺滑', singable: '更可唱' },
+    style: { literal: '直译', natural: '自然', lyrical: '歌词化' },
+    faithfulness: { balanced: '均衡', faithful: '更忠实', adaptive: '更灵活' },
+    chineseTone: { lyric: '中文歌词感', plain: '清楚直白', poetic: '更有诗意', spoken: '更口语' },
+  };
+  const approach = preferences.translationApproach
+    || (preferences.chineseTone === 'poetic' ? 'poetic' : preferences.faithfulness === 'faithful' ? 'faithful' : preferences.chineseTone === 'plain' ? 'concise' : 'naturalLyrics');
+  const delivery = preferences.delivery
+    || (preferences.rhythm === 'singable' ? 'singable' : preferences.lineLength === 'short' ? 'short' : (preferences.rhythm === 'smooth' || preferences.lineLength === 'flexible') ? 'smooth' : 'match');
+  return [
+    labels.purpose[preferences.purpose],
+    labels.translationApproach[approach] || labels.style[preferences.style],
+    labels.emotionIntensity[preferences.emotionIntensity],
+    labels.delivery[delivery] || labels.faithfulness[preferences.faithfulness] || labels.chineseTone[preferences.chineseTone],
+  ].filter(Boolean).join(' · ') || '自然歌词';
 }
 function escapeXml(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

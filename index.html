@@ -22,7 +22,6 @@
             <p id="apiSummary">OpenAI / gpt-5.4-mini</p>
           </div>
           <div class="summary-actions">
-            <button class="button ghost compact" type="button" id="openShareButton">分享地址</button>
             <button class="button ghost compact" type="button" id="openHistoryButton">历史库</button>
             <button class="button primary compact" type="button" id="openApiModalButton">配置接口</button>
           </div>
@@ -93,20 +92,6 @@
             <button class="button secondary" type="button" id="closeApiModalButton">关闭</button>
             <button class="button primary" type="button" id="saveApiModalButton">保存配置</button>
           </div>
-        </div>
-      </dialog>
-
-      <dialog class="api-modal" id="shareModal" aria-labelledby="shareModalTitle">
-        <div class="modal-card">
-          <div class="api-panel-head modal-head">
-            <div>
-              <h2 id="shareModalTitle">分享地址</h2>
-              <p>公网部署后直接使用网站地址</p>
-            </div>
-          </div>
-          <div class="share-list" id="shareList"><div class="history-empty">正在读取地址...</div></div>
-          <div class="share-tip">如果这里显示容器内部地址，请直接复制浏览器地址栏里的公网网址。</div>
-          <div class="modal-actions"><button class="button secondary" type="button" id="closeShareButton">关闭</button></div>
         </div>
       </dialog>
 

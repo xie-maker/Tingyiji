@@ -29,6 +29,8 @@ const labels = {
   delivery: { match: '贴近原行', short: '更短句', smooth: '更顺滑', singable: '更可唱' },
 };
 
+let downloadDirectoryHandle = null;
+
 const approachDefaults = {
   naturalLyrics: { style: 'lyrical', faithfulness: 'balanced', chineseTone: 'lyric' },
   faithful: { style: 'natural', faithfulness: 'faithful', chineseTone: 'plain' },
@@ -407,12 +409,13 @@ function renderHistory() {
 }
 function preferenceSnapshot(preferences) {
   if (!preferences) return '未记录';
+  const normalized = normalizeUiPreferences(preferences);
   return [
-    labels.purpose[preferences.purpose],
-    labels.style[preferences.style],
-    labels.faithfulness[preferences.faithfulness],
-    labels.chineseTone[preferences.chineseTone],
-  ].filter(Boolean).join(' · ');
+    labels.purpose[normalized.purpose],
+    labels.translationApproach[normalized.translationApproach],
+    labels.emotionIntensity[normalized.emotionIntensity],
+    labels.delivery[normalized.delivery],
+  ].filter(Boolean).join(' · ') || '自然歌词';
 }
 function loadHistoryEntry(id) {
   const item = historyItems().find((entry) => entry.id === id);
@@ -429,25 +432,33 @@ function loadHistoryEntry(id) {
   showMessage(`已打开历史记录：${item.title || '未填写歌名'}。`);
 }
 async function saveDocx(item, mode) {
-  const response = await fetch('/api/history/save-docx', {
+  const response = await fetch('/api/history/prepare-docx', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, historyDir: el('historyDirInput').value.trim(), entry: item }),
+    body: JSON.stringify({ entry: item }),
   });
-  if (mode === 'download' && response.ok) {
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${item.artist || '歌手'} - ${item.title || '歌名'}.docx`;
-    link.click();
-    URL.revokeObjectURL(url);
-    showMessage('DOCX 已开始下载。');
-    return;
-  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'DOCX 保存失败。');
-  showMessage(`已保存：${data.filePath || data.filename}`);
+  if (mode === 'download' && downloadDirectoryHandle && typeof FileSystemFileHandle !== 'undefined' && 'createWritable' in FileSystemFileHandle.prototype) {
+    const docx = await fetch(data.downloadUrl).then((res) => {
+      if (!res.ok) throw new Error('DOCX 下载链接生成失败。');
+      return res.blob();
+    });
+    const fileHandle = await downloadDirectoryHandle.getFileHandle(data.filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(docx);
+    await writable.close();
+    showMessage(`DOCX 已保存到选择的文件夹：${data.filename}`);
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = data.downloadUrl;
+  link.download = data.filename || `${item.artist || '歌手'} - ${item.title || '歌名'}.docx`;
+  link.rel = 'noopener';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  showMessage('DOCX 已交给浏览器下载。');
 }
 
 function openFeedback() {
@@ -658,9 +669,22 @@ function bindEvents() {
     }
   });
   el('historyArtistFilter').addEventListener('change', renderHistory);
-  el('saveHistoryDirButton').addEventListener('click', () => {
-    localStorage.setItem(storeKeys.historyDir, el('historyDirInput').value.trim());
-    showMessage('历史库保存路径已记住。');
+  el('saveHistoryDirButton').addEventListener('click', async () => {
+    if (!window.showDirectoryPicker) {
+      downloadDirectoryHandle = null;
+      el('historyDirInput').value = '浏览器默认下载路径';
+      localStorage.setItem(storeKeys.historyDir, el('historyDirInput').value);
+      showMessage('当前浏览器不支持选择文件夹，DOCX 会保存到浏览器默认下载位置。');
+      return;
+    }
+    try {
+      downloadDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      el('historyDirInput').value = downloadDirectoryHandle.name || '已选择下载文件夹';
+      localStorage.setItem(storeKeys.historyDir, el('historyDirInput').value);
+      showMessage('已选择下载文件夹，本次页面打开期间会保存到这里。');
+    } catch (error) {
+      if (error.name !== 'AbortError') showMessage('选择路径失败，请使用浏览器默认下载路径。', true);
+    }
   });
   el('historyList').addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-action]');
@@ -683,27 +707,6 @@ function bindEvents() {
       showMessage(error.message, true);
     }
   });
-
-  el('openShareButton').addEventListener('click', async () => {
-    el('shareList').innerHTML = '<div class="history-empty">正在读取地址...</div>';
-    el('shareModal').showModal();
-    try {
-      const data = await fetch('/api/share-info').then((res) => res.json());
-      el('shareList').innerHTML = '';
-      for (const url of data.urls || [location.origin]) {
-        const item = document.createElement('div');
-        item.className = 'share-item';
-        item.innerHTML = '<a target="_blank"></a><button class="button ghost compact" type="button">复制</button>';
-        $('a', item).href = url;
-        $('a', item).textContent = url;
-        $('button', item).addEventListener('click', () => navigator.clipboard.writeText(url));
-        el('shareList').append(item);
-      }
-    } catch {
-      el('shareList').innerHTML = '<div class="history-empty">读取失败。</div>';
-    }
-  });
-  el('closeShareButton').addEventListener('click', () => el('shareModal').close());
 
   el('feedbackButton').addEventListener('click', openFeedback);
   el('closeFeedbackButton').addEventListener('click', () => el('feedbackModal').close());
@@ -782,11 +785,7 @@ function bindEvents() {
 }
 
 async function initHistoryPath() {
-  el('historyDirInput').value = localStorage.getItem(storeKeys.historyDir) || '';
-  try {
-    const data = await fetch('/api/history/settings').then((res) => res.json());
-    if (!el('historyDirInput').value) el('historyDirInput').value = data.historyDir || '';
-  } catch {}
+  el('historyDirInput').value = localStorage.getItem(storeKeys.historyDir) || '浏览器默认下载路径';
 }
 
 function init() {

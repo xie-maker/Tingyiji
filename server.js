@@ -1,6 +1,5 @@
 const http = require('node:http');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
 const root = __dirname;
@@ -37,7 +36,6 @@ http.createServer(async (req, res) => {
     if (url.pathname === '/api/translate') return await handleTranslate(req, res);
     if (url.pathname === '/api/translate-line') return await handleTranslateLine(req, res);
     if (url.pathname === '/api/models') return await handleModels(req, res);
-    if (url.pathname === '/api/share-info') return sendJson(res, 200, { port: PORT, host: HOST, urls: shareUrls() });
     if (url.pathname === '/api/history/settings') return sendJson(res, 200, { historyDir: HISTORY_DIR, defaultHistoryDir: HISTORY_DIR });
     if (url.pathname === '/api/history/save-docx') return await handleSaveDocx(req, res);
     if (url.pathname === '/api/quality-feedback') return await handleFeedback(req, res);
@@ -49,7 +47,7 @@ http.createServer(async (req, res) => {
   }
 }).listen(PORT, HOST, () => {
   console.log('听译集已启动');
-  shareUrls().forEach((url) => console.log('- ' + url));
+  console.log(`- http://${HOST}:${PORT}`);
 });
 
 async function handleTranslate(req, res) {
@@ -97,14 +95,28 @@ async function translateLyricV3(api, sourceLines, metadata) {
   const payload = {
     model: api.model,
     messages: [
-      { role: 'system', content: buildCompactV3Prompt(metadata) },
-      { role: 'user', content: JSON.stringify({ task: 'Translate these foreign song lyrics into polished Chinese lyrics.', ...metadata, lines: sourceLines }) },
+      { role: 'system', content: buildCompactV3Prompt(metadata, sourceLines) },
+      { role: 'user', content: buildLineTranslationRequest(sourceLines, metadata) },
     ],
     temperature: ['singing', 'polished'].includes(metadata.preferences.purpose) ? 0.35 : 0.25,
   };
   const parsed = parseJsonObject(await chat(api, payload));
   if (!Array.isArray(parsed.translations)) throw new Error('模型没有返回可用译文，请重试。');
   return parsed;
+}
+
+function buildLineTranslationRequest(sourceLines, metadata) {
+  const numbered = sourceLines.map((line, index) => `${index + 1}. ${line || '[blank]'}`).join('\n');
+  return [
+    '只翻译下面编号歌词 逐编号返回 translations',
+    '不要翻译歌名 歌手 元数据 也不要使用你记忆里的未粘贴歌词',
+    '如果你认识这首歌 也必须只处理下面这些行',
+    '编号歌词开始',
+    numbered,
+    '编号歌词结束',
+    `元数据 歌名 ${metadata.title || '未填写'} 歌手 ${metadata.artist || '未填写'} 源语言 ${metadata.sourceLanguage}`,
+    '返回严格 JSON {"sourceLanguage":"...","translations":["..."],"notes":["..."]}',
+  ].join('\n');
 }
 
 async function buildTranslationPlan(api, sourceLines, metadata) {
@@ -264,14 +276,16 @@ function buildPreferenceBrief(preferences) {
   ].filter(Boolean).join('；');
 }
 
-function buildCompactV3Prompt(metadata) {
+function buildCompactV3Prompt(metadata, sourceLines = []) {
   const p = metadata.preferences;
   return [
     '你是听译集 Lyric Master v3 歌词译者 只输出最终 JSON',
     `源语言 ${metadata.sourceLanguage === 'auto' ? '自动识别' : metadata.sourceLanguage}`,
     `偏好 ${buildPreferenceBrief(p)}`,
-    buildReferenceStyleBrief(metadata),
+    buildReferenceStyleBrief(metadata, sourceLines),
     '内部流程 通读全歌 理清叙事 人物关系 情绪曲线 意象 hook 重复句 再逐行翻译和自检',
+    '任何参考例句和风格提示都不是待翻译歌词 只能在当前输入行确实包含对应原文时使用',
+    '每个 translations[index] 必须只翻译 lines[index] 这一行 不能写入其他行 未输入歌词 或歌曲记忆里的后续内容',
     '所有行都参考上下文 跨行句先整体理解再拆回原行',
     '统一 我 你 我们 他 她 称呼 时态 语气 重复意象 hook',
     p.moderateSubjectFill ? '省略主语时结合上下文判断 中文不补会误解才自然补出我 你 我们等主语' : '尽量保留无主语留白',
@@ -285,6 +299,11 @@ function buildCompactV3Prompt(metadata) {
     '韩语 줄래 주렴 까 等语尾要译出柔软请求或疑问 不要只译成短命令',
     '意象抽象句要保留诗意骨架 如 孤独的反义词 想象力贫瘠 世界尽头 支离破碎',
     '英文夹杂词优先服务记忆点 My lover 通常译作我的爱人 Run on 通常译作不停奔跑 Love wins all 通常译作爱胜过一切',
+    '传统民歌和经典外文歌要先识别它是抒情 民谣 送别 乡愁 祝愿或童谣 不要把朴素民歌译成现代口号',
+    '公开校准规则 Sakura Sakura 要保留春日 樱花 暮色或霞云等画面 Arirang 要保留山岭 离别 怨而不怒的民谣口吻 Auld Lang Syne 要保留旧日情谊 举杯 回忆和温柔告别',
+    '民谣里的 님 不要默认坐实为我的爱人 可按上下文译作你 那人 心上人 或离去的人 保留含蓄称呼',
+    'Auld Lang Syne 这类英语反问句要译成自然追问 如旧友怎能遗忘 怎能不放在心上 避免被人回想这类说明腔',
+    '如果一行是前一行的宾语 状语或补语 中文可用承接词或补主语让上下句顺起来 但不能增添原文没有的解释',
     '保持输入行数 空行返回空字符串',
     '最终译文无任何标点 只用空格和换行表达停顿',
     '只返回严格 JSON 格式 {"sourceLanguage":"...","translations":["..."],"notes":["..."]}',
@@ -293,37 +312,51 @@ function buildCompactV3Prompt(metadata) {
   ].filter(Boolean).join('\n');
 }
 
-function buildReferenceStyleBrief(metadata) {
+function buildReferenceStyleBrief(metadata, sourceLines = []) {
   const title = clean(metadata.title || '').toLowerCase();
   const artist = clean(metadata.artist || '').toLowerCase();
+  const sourceText = sourceLines.join('\n');
+  const has = (needle) => sourceText.includes(needle);
   const lines = [
+    '以下只是风格和术语参考 不是待翻译歌词 禁止把未输入的参考例句补进译文',
     '参考人工精修方向 准确基础上可适度展开半拍 让中文更像完整歌词 不要只给短促释义',
     '称呼和祈愿句要更柔软 例如 你可否带我去往 我的爱人 和我一起走到尽头',
     '重复 hook 要成为记忆点 同一原句前后译法保持稳定',
   ];
   if (title.includes('love wins all') || artist.includes('iu')) {
     lines.push('本歌风格参考 IU Love wins all 译法要有末日私奔感 克制但深情');
-    lines.push('建议记忆点 Dearest Darling My universe 译作我亲爱的宇宙 或最亲爱的 我的宇宙');
-    lines.push('날 데려가 줄래 译出你可否带我去往 不要只写能否带我走');
-    lines.push('from Earth to Mars 译出从地球去往遥远的火星');
-    lines.push('세상에게서 도망쳐 Run on 统一为逃离这个世界 不停奔跑');
-    lines.push('저 끝까지 가줘 My lover 统一为我的爱人 和我一起走到尽头 或世界尽头');
-    lines.push('부서지도록 나를 꼭 안아 译出紧紧拥抱我 直到支离破碎');
-    lines.push('어떤 실수로 이토록 우리는 함께일까 译出是怎样的差错让我们如此在一起');
-    lines.push('유영하듯 떠오른 译作如漂浮般浮现 不要译成游泳');
-    lines.push('Ruiner 译作毁灭者 或保留 Ruiner 后用毁灭感表达');
-    lines.push('Love wins all 统一为爱胜过一切 或我们的爱胜过一切');
+    if (has('Dearest Darling My universe')) lines.push('Dearest Darling My universe 译作我亲爱的宇宙 或最亲爱的 我的宇宙');
+    if (has('날 데려가 줄래')) lines.push('날 데려가 줄래 译出你可否带我去往 不要只写能否带我走');
+    if (has('from Earth to Mars')) lines.push('from Earth to Mars 译出从地球去往遥远的火星');
+    if (has('세상에게서 도망쳐 Run on')) lines.push('세상에게서 도망쳐 Run on 统一为逃离这个世界 不停奔跑');
+    if (has('저 끝까지 가줘 My lover')) lines.push('저 끝까지 가줘 My lover 统一为我的爱人 和我一起走到尽头 或世界尽头');
+    if (has('부서지도록 나를 꼭 안아')) lines.push('부서지도록 나를 꼭 안아 译出紧紧拥抱我 直到支离破碎');
+    if (has('어떤 실수로 이토록 우리는 함께일까')) lines.push('어떤 실수로 이토록 우리는 함께일까 译出是怎样的差错让我们如此在一起');
+    if (has('유영하듯 떠오른')) lines.push('유영하듯 떠오른 译作如漂浮般浮现 不要译成游泳');
+    if (has('Ruiner')) lines.push('Ruiner 译作毁灭者 或保留 Ruiner 后用毁灭感表达');
+    if (has('Love wins all')) lines.push('Love wins all 统一为爱胜过一切 或我们的爱胜过一切');
   }
   if (title.includes('hiruno hoshi') || title.includes('昼の星') || artist.includes('radwimps')) {
     lines.push('日语 RADWIMPS 风格要保留矛盾修饰和轻微别扭的诗意 不要抹平成普通说明');
-    lines.push('鮮やかな虚しさ 健やかな卑しさ したたかな優しさ あたたかな寂しさ 这类反差结构要保留反差');
-    lines.push('そっと笑ってよ そこで叱ってよ もっといらってよ そっと祝うよ 要译出轻轻 请你 就在那里 等柔软请求语气');
-    lines.push('夜に迷わぬように 星など探さぬように 要处理成不愿在夜里迷失 也不必寻找星星这类连贯祈愿');
-    lines.push('昼の星 是白天的星 昼もそこにいるのに 要保留明明白天也在那里却看不见的意象');
-    lines.push('夢の前で待ち合わせ 译作在梦的前方汇合或相约在梦的前方');
-    lines.push('理由など一つもなくキスをしよう 译作不为任何理由地亲吻吧 保持重复句一致');
-    lines.push('せーのでジャンプしよう 译作数着一二一起跳吧 或同时起跳吧');
-    lines.push('同じ時と空の狭間 要译作相同的时空夹缝或同一时间与天空的缝隙');
+    if (has('鮮やかな僕の虚しさ') || has('健やかな僕の卑しさ') || has('したたかな僕の優しさ') || has('あたたかな君の寂しさ')) lines.push('鮮やかな虚しさ 健やかな卑しさ したたかな優しさ あたたかな寂しさ 这类反差结构要保留反差');
+    if (has('そっと笑ってよ') || has('そこで叱ってよ') || has('もっといらってよ') || has('そっと祝うよ')) lines.push('そっと笑ってよ そこで叱ってよ もっといらってよ そっと祝うよ 要译出轻轻 请你 就在那里 等柔软请求语气');
+    if (has('夜に迷わぬように') || has('星など探さぬように')) lines.push('夜に迷わぬように 星など探さぬように 要处理成不愿在夜里迷失 也不必寻找星星这类连贯祈愿');
+    if (has('昼の星') || has('昼もそこにいるのに')) lines.push('昼の星 是白天的星 昼もそこにいるのに 要保留明明白天也在那里却看不见的意象');
+    if (has('夢の前で待ち合わせ')) lines.push('夢の前で待ち合わせ 译作在梦的前方汇合或相约在梦的前方');
+    if (has('理由など一つもなくキスをしよう')) lines.push('理由など一つもなくキスをしよう 译作不为任何理由地亲吻吧 保持重复句一致');
+    if (has('せーのでジャンプしよう')) lines.push('せーのでジャンプしよう 译作数着一二一起跳吧 或同时起跳吧');
+    if (has('同じ時と空の狭間')) lines.push('同じ時と空の狭間 要译作相同的时空夹缝或同一时间与天空的缝隙');
+  }
+  if (title.includes('sakura') || title.includes('さくら') || title.includes('桜') || title.includes('櫻')) {
+    lines.push('Sakura Sakura 一类传统日语歌曲要像古典短歌 画面干净 译出樱花连绵 云霞暮色与赏花邀约');
+  }
+  if (title.includes('arirang') || title.includes('아리랑')) {
+    lines.push('Arirang 一类韩国民谣要保留反复吟唱 离别 山岭 怨而克制的口吻 不要写成直白控诉');
+    lines.push('님 可译作你 那人 或心上人 不要轻易写成我的爱人 발병 난다 是民谣式怨语 可译作未到十里脚便疼');
+  }
+  if (title.includes('auld lang syne')) {
+    lines.push('Auld Lang Syne 一类送别歌要保留旧日情谊 重逢举杯 温柔怀旧 不要译得口号化');
+    lines.push('Should auld acquaintance be forgot 是温柔反问 译作旧友怎能遗忘 或旧日情谊怎能忘怀 不要译成被动说明句');
   }
   return lines.join('\n');
 }
@@ -553,7 +586,6 @@ function removePunctuation(value) { return clean(value).replace(/[，,。．.、
 function parseJsonObject(text) { try { return JSON.parse(text); } catch { const match = String(text).match(/\{[\s\S]*\}/); if (!match) throw new Error('模型没有返回 JSON。'); return JSON.parse(match[0]); } }
 function readJsonArray(filePath) { try { return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : []; } catch { return []; } }
 function loadEnv(filePath) { if (!fs.existsSync(filePath)) return; for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) { const trimmed = line.trim(); if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue; const index = trimmed.indexOf('='); const key = trimmed.slice(0, index).trim(); const value = trimmed.slice(index + 1).trim().replace(/^["']|["']$/g, ''); if (key && !process.env[key]) process.env[key] = value; } }
-function shareUrls() { const urls = [`http://localhost:${PORT}`]; for (const group of Object.values(os.networkInterfaces())) for (const item of group || []) if (item.family === 'IPv4' && !item.internal) urls.push(`http://${item.address}:${PORT}`); return [...new Set(urls)]; }
 function safeFilename(value) { return String(value || 'lyrics.docx').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 150) || 'lyrics.docx'; }
 function timestamp(value) { const date = new Date(value || Date.now()); const pad = (n) => String(n).padStart(2, '0'); return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`; }
 
@@ -564,6 +596,7 @@ function createDocx(entry) {
     paragraph(entry.artist || '未填写歌手', 'center'),
     paragraph(new Date(entry.createdAt || Date.now()).toLocaleString('zh-CN'), 'right'),
     paragraph(entry.sourceLanguage || 'auto', 'right'),
+    paragraph(preferenceSummary(entry.preferences), 'right'),
     paragraph(' '),
     ...String(entry.lyrics || '').split('\n').map((line) => paragraph(line)),
     '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
@@ -578,5 +611,26 @@ function createDocx(entry) {
 }
 
 function escapeXml(value) { return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function preferenceSummary(preferences = {}) {
+  const labels = {
+    purpose: { reading: '阅读', subtitle: '字幕', singing: '演唱', polished: '精修' },
+    translationApproach: { naturalLyrics: '自然歌词', faithful: '忠实准确', poetic: '更有诗意', concise: '简洁直白' },
+    emotionIntensity: { original: '贴近原歌', restrained: '更克制', intense: '更浓烈' },
+    delivery: { match: '贴近原行', short: '更短句', smooth: '更顺滑', singable: '更可唱' },
+    style: { literal: '直译', natural: '自然', lyrical: '歌词化' },
+    faithfulness: { balanced: '均衡', faithful: '更忠实', adaptive: '更灵活' },
+    chineseTone: { lyric: '中文歌词感', plain: '清楚直白', poetic: '更有诗意', spoken: '更口语' },
+  };
+  const approach = preferences.translationApproach
+    || (preferences.chineseTone === 'poetic' ? 'poetic' : preferences.faithfulness === 'faithful' ? 'faithful' : preferences.chineseTone === 'plain' ? 'concise' : 'naturalLyrics');
+  const delivery = preferences.delivery
+    || (preferences.rhythm === 'singable' ? 'singable' : preferences.lineLength === 'short' ? 'short' : (preferences.rhythm === 'smooth' || preferences.lineLength === 'flexible') ? 'smooth' : 'match');
+  return [
+    labels.purpose[preferences.purpose],
+    labels.translationApproach[approach] || labels.style[preferences.style],
+    labels.emotionIntensity[preferences.emotionIntensity],
+    labels.delivery[delivery] || labels.faithfulness[preferences.faithfulness] || labels.chineseTone[preferences.chineseTone],
+  ].filter(Boolean).join(' · ') || '自然歌词';
+}
 function zip(files) { const locals = [], centrals = []; let offset = 0; for (const [name, data] of Object.entries(files)) { const nameBuffer = Buffer.from(name); const dataBuffer = Buffer.from(data); const crc = crc32(dataBuffer); const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6); local.writeUInt32LE(crc, 14); local.writeUInt32LE(dataBuffer.length, 18); local.writeUInt32LE(dataBuffer.length, 22); local.writeUInt16LE(nameBuffer.length, 26); locals.push(local, nameBuffer, dataBuffer); const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(0x0800, 8); central.writeUInt32LE(crc, 16); central.writeUInt32LE(dataBuffer.length, 20); central.writeUInt32LE(dataBuffer.length, 24); central.writeUInt16LE(nameBuffer.length, 28); central.writeUInt32LE(offset, 42); centrals.push(central, nameBuffer); offset += local.length + nameBuffer.length + dataBuffer.length; } const centralBuffer = Buffer.concat(centrals); const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10); end.writeUInt32LE(centralBuffer.length, 12); end.writeUInt32LE(offset, 16); return Buffer.concat([...locals, centralBuffer, end]); }
 function crc32(buffer) { let crc = 0xffffffff; for (const byte of buffer) { crc ^= byte; for (let index = 0; index < 8; index += 1) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1; } return (crc ^ 0xffffffff) >>> 0; }
