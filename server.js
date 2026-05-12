@@ -569,7 +569,18 @@ function readBody(req) {
       raw += chunk;
     });
     req.on('end', () => {
-      try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('请求 JSON 格式不正确。')); }
+      try {
+        if (!raw) return resolve({});
+        const type = String(req.headers['content-type'] || '');
+        if (type.includes('application/x-www-form-urlencoded')) {
+          const params = new URLSearchParams(raw);
+          const payload = params.get('payload');
+          return resolve(payload ? JSON.parse(payload) : Object.fromEntries(params.entries()));
+        }
+        return resolve(JSON.parse(raw));
+      } catch {
+        return reject(new Error('请求 JSON 格式不正确。'));
+      }
     });
     req.on('error', reject);
   });

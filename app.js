@@ -432,33 +432,82 @@ function loadHistoryEntry(id) {
   showMessage(`已打开历史记录：${item.title || '未填写歌名'}。`);
 }
 async function saveDocx(item, mode) {
-  const response = await fetch('/api/history/prepare-docx', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entry: item }),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'DOCX 保存失败。');
-  if (mode === 'download' && downloadDirectoryHandle && typeof FileSystemFileHandle !== 'undefined' && 'createWritable' in FileSystemFileHandle.prototype) {
-    const docx = await fetch(data.downloadUrl).then((res) => {
-      if (!res.ok) throw new Error('DOCX 下载链接生成失败。');
-      return res.blob();
-    });
-    const fileHandle = await downloadDirectoryHandle.getFileHandle(data.filename, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(docx);
-    await writable.close();
-    showMessage(`DOCX 已保存到选择的文件夹：${data.filename}`);
-    return;
+  if (mode === 'download' && downloadDirectoryHandle) {
+    try {
+      await ensureDirectoryPermission(downloadDirectoryHandle);
+      const filename = docxFilename(item);
+      const fileHandle = await downloadDirectoryHandle.getFileHandle(filename, { create: true });
+      const response = await fetch('/api/history/save-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'download', entry: item }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'DOCX 下载失败。');
+      }
+      const writable = await fileHandle.createWritable();
+      await writable.write(await response.blob());
+      await writable.close();
+      showMessage(`DOCX 已保存到选择的文件夹：${filename}`);
+      return;
+    } catch (error) {
+      downloadDirectoryHandle = null;
+      el('historyDirInput').value = '浏览器默认下载路径';
+      localStorage.setItem(storeKeys.historyDir, el('historyDirInput').value);
+      showMessage('选择路径不可用 已改用浏览器默认下载。', true);
+    }
   }
-  const link = document.createElement('a');
-  link.href = data.downloadUrl;
-  link.download = data.filename || `${item.artist || '歌手'} - ${item.title || '歌名'}.docx`;
-  link.rel = 'noopener';
-  document.body.append(link);
-  link.click();
-  link.remove();
+  submitDocxDownload(item);
   showMessage('DOCX 已交给浏览器下载。');
+}
+
+async function ensureDirectoryPermission(handle) {
+  if (!handle || typeof handle.queryPermission !== 'function') return;
+  const options = { mode: 'readwrite' };
+  if (await handle.queryPermission(options) === 'granted') return;
+  if (typeof handle.requestPermission === 'function' && await handle.requestPermission(options) === 'granted') return;
+  throw new Error('没有文件夹写入权限。');
+}
+
+function submitDocxDownload(item) {
+  const frameName = 'docx-download-frame';
+  let frame = document.querySelector(`iframe[name="${frameName}"]`);
+  if (!frame) {
+    frame = document.createElement('iframe');
+    frame.name = frameName;
+    frame.hidden = true;
+    document.body.append(frame);
+  }
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/api/history/save-docx';
+  form.target = frameName;
+  form.enctype = 'application/x-www-form-urlencoded';
+  form.hidden = true;
+
+  const payload = document.createElement('input');
+  payload.type = 'hidden';
+  payload.name = 'payload';
+  payload.value = JSON.stringify({ mode: 'download', entry: item });
+  form.append(payload);
+  document.body.append(form);
+  form.submit();
+  form.remove();
+}
+
+function docxFilename(item) {
+  return safeFilename(`${item.artist || '未填写歌手'} - ${item.title || '未填写歌名'} - ${timestamp(item.createdAt)}.docx`);
+}
+
+function safeFilename(value) {
+  return String(value || 'lyrics.docx').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 150) || 'lyrics.docx';
+}
+
+function timestamp(value) {
+  const date = new Date(value || Date.now());
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 function openFeedback() {
